@@ -1,0 +1,219 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSettings } from '../context/SettingsContext'
+import { store } from '../lib/store'
+import { calculatePrice, getAvailableDurations, getAvailableStartHours } from '../lib/pricing'
+import type { BookingLike, BlockedSlotLike } from '../lib/pricing'
+import { hourToTime, minutesToTime, timeToMinutes, todayISO } from '../lib/time'
+import type { Booking, BookingInput, PaymentMethod } from '../types'
+
+export type BookingStep = 'date' | 'time' | 'duration' | 'info' | 'summary' | 'confirmation'
+
+export interface CustomerInfo {
+  customerName: string
+  mobileNumber: string
+  email: string
+  numberOfPlayers: number
+  notes: string
+  paymentMethod: PaymentMethod
+}
+
+const STEP_ORDER: BookingStep[] = ['date', 'time', 'duration', 'info', 'summary', 'confirmation']
+
+export function useBookingFlow() {
+  const { settings } = useSettings()
+
+  const [step, setStep] = useState<BookingStep>('date')
+  const [date, setDate] = useState<string | null>(null)
+  const [startHour, setStartHour] = useState<number | null>(null)
+  const [duration, setDuration] = useState<number | null>(null)
+  const [customer, setCustomer] = useState<CustomerInfo>({
+    customerName: '',
+    mobileNumber: '',
+    email: '',
+    numberOfPlayers: 2,
+    notes: '',
+    paymentMethod: 'cash',
+  })
+
+  const [availability, setAvailability] = useState<{ bookings: BookingLike[]; blocked: BlockedSlotLike[] }>({
+    bookings: [],
+    blocked: [],
+  })
+  const [loadingAvailability, setLoadingAvailability] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [confirmedBooking, setConfirmedBooking] = useState<Booking | null>(null)
+
+  // Fetch fresh availability whenever the selected date changes.
+  useEffect(() => {
+    if (!date) return
+    let cancelled = false
+    setLoadingAvailability(true)
+    Promise.all([store.getAvailabilityForDate(date), store.listBlockedSlots()])
+      .then(([rows, blockedSlots]) => {
+        if (cancelled) return
+        const blockedForDate: BlockedSlotLike[] = blockedSlots
+          .filter((b) => b.date === date)
+          .map((b) => ({
+            date: b.date,
+            startTime: b.allDay ? settings.openingTime : b.startTime,
+            endTime: b.allDay ? settings.closingTime : b.endTime,
+            allDay: b.allDay,
+          }))
+        setAvailability({ bookings: rows, blocked: blockedForDate })
+      })
+      .finally(() => !cancelled && setLoadingAvailability(false))
+    return () => {
+      cancelled = true
+    }
+  }, [date, settings.openingTime, settings.closingTime])
+
+  const availableStartHours = useMemo(() => {
+    if (!date) return []
+    return getAvailableStartHours(date, settings, availability.bookings, availability.blocked)
+  }, [date, settings, availability])
+
+  const availableDurations = useMemo(() => {
+    if (!date || startHour === null) return []
+    return getAvailableDurations(startHour, date, settings, availability.bookings, availability.blocked)
+  }, [date, startHour, settings, availability])
+
+  const priceResult = useMemo(() => {
+    if (startHour === null || !duration) return null
+    return calculatePrice(startHour, duration, settings)
+  }, [startHour, duration, settings])
+
+  const endTime = useMemo(() => {
+    if (startHour === null || !duration) return null
+    return minutesToTime((startHour + duration) * 60)
+  }, [startHour, duration])
+
+  const goToStep = useCallback((s: BookingStep) => setStep(s), [])
+
+  const selectDate = useCallback((iso: string) => {
+    setDate(iso)
+    setStartHour(null)
+    setDuration(null)
+    setStep('time')
+  }, [])
+
+  const selectStartHour = useCallback((h: number) => {
+    setStartHour(h)
+    setDuration(null)
+    setStep('duration')
+  }, [])
+
+  const selectDuration = useCallback((d: number) => {
+    setDuration(d)
+    setStep('info')
+  }, [])
+
+  const goBack = useCallback(() => {
+    const idx = STEP_ORDER.indexOf(step)
+    if (idx > 0) setStep(STEP_ORDER[idx - 1])
+  }, [step])
+
+  const submitCustomerInfo = useCallback(() => {
+    setStep('summary')
+  }, [])
+
+  const submitBooking = useCallback(async () => {
+    if (!date || startHour === null || !duration || !priceResult?.valid || !endTime) return
+    setSubmitting(true)
+    setSubmitError(null)
+    try {
+      // Re-check availability right before submit to avoid double-booking races.
+      const [freshRows, blockedSlots] = await Promise.all([
+        store.getAvailabilityForDate(date),
+        store.listBlockedSlots(),
+      ])
+      const startMin = timeToMinutes(hourToTime(startHour))
+      const endMin = timeToMinutes(endTime)
+      const conflict =
+        freshRows.some(
+          (r) =>
+            r.status !== 'cancelled' &&
+            startMin < timeToMinutes(r.endTime) &&
+            timeToMinutes(r.startTime) < endMin,
+        ) ||
+        blockedSlots.some((b) => {
+          if (b.date !== date) return false
+          const bStart = timeToMinutes(b.allDay ? settings.openingTime : b.startTime)
+          const bEnd = timeToMinutes(b.allDay ? settings.closingTime : b.endTime)
+          return startMin < bEnd && bStart < endMin
+        })
+
+      if (conflict) {
+        setSubmitError('Sorry, this time slot was just booked by someone else. Please choose another time.')
+        setStep('time')
+        setSubmitting(false)
+        return
+      }
+
+      const input: BookingInput = {
+        customerName: customer.customerName.trim(),
+        mobileNumber: customer.mobileNumber.trim(),
+        email: customer.email.trim(),
+        numberOfPlayers: customer.numberOfPlayers,
+        bookingDate: date,
+        startTime: hourToTime(startHour),
+        endTime,
+        duration,
+        rateBreakdown: priceResult.breakdown,
+        totalAmount: priceResult.total,
+        notes: customer.notes.trim() || undefined,
+        paymentMethod: customer.paymentMethod,
+      }
+      const booking = await store.createBooking(input)
+      setConfirmedBooking(booking)
+      setStep('confirmation')
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Something went wrong. Please try again.')
+    } finally {
+      setSubmitting(false)
+    }
+  }, [date, startHour, duration, priceResult, endTime, customer, settings])
+
+  const reset = useCallback(() => {
+    setStep('date')
+    setDate(null)
+    setStartHour(null)
+    setDuration(null)
+    setCustomer({
+      customerName: '',
+      mobileNumber: '',
+      email: '',
+      numberOfPlayers: 2,
+      notes: '',
+      paymentMethod: 'cash',
+    })
+    setConfirmedBooking(null)
+    setSubmitError(null)
+  }, [])
+
+  return {
+    step,
+    date,
+    startHour,
+    duration,
+    endTime,
+    customer,
+    setCustomer,
+    availableStartHours,
+    availableDurations,
+    priceResult,
+    loadingAvailability,
+    submitting,
+    submitError,
+    confirmedBooking,
+    minDate: todayISO(),
+    goToStep,
+    selectDate,
+    selectStartHour,
+    selectDuration,
+    goBack,
+    submitCustomerInfo,
+    submitBooking,
+    reset,
+  }
+}

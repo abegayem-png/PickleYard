@@ -1,0 +1,212 @@
+import { useEffect, useState } from 'react'
+import { useSettings } from '../../context/SettingsContext'
+import { isSupabaseConfigured } from '../../lib/supabaseClient'
+import type { Settings } from '../../types'
+import Button from '../../components/ui/Button'
+import Card from '../../components/ui/Card'
+
+export default function AdminSettings() {
+  const { settings, updateSettings } = useSettings()
+  const [form, setForm] = useState<Settings>(settings)
+  const [saving, setSaving] = useState<string | null>(null)
+  const [savedMsg, setSavedMsg] = useState<string | null>(null)
+
+  useEffect(() => setForm(settings), [settings])
+
+  function set<K extends keyof Settings>(key: K, value: Settings[K]) {
+    setForm((f) => ({ ...f, [key]: value }))
+  }
+
+  async function save(section: string, patch: Partial<Settings>) {
+    setSaving(section)
+    setSavedMsg(null)
+    try {
+      await updateSettings(patch)
+      setSavedMsg(`${section} saved.`)
+      setTimeout(() => setSavedMsg(null), 2500)
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="font-display text-2xl font-extrabold text-cream">Settings</h1>
+        {savedMsg && <span className="text-sm font-semibold text-lime-500">{savedMsg}</span>}
+      </div>
+
+      <Section title="Business Info" onSave={() => save('Business info', { businessName: form.businessName, tagline: form.tagline })} saving={saving === 'Business info'}>
+        <TextField label="Business Name" value={form.businessName} onChange={(v) => set('businessName', v)} />
+        <TextField label="Tagline" value={form.tagline} onChange={(v) => set('tagline', v)} />
+      </Section>
+
+      <Section
+        title="Court Pricing"
+        onSave={() =>
+          save('Pricing', {
+            daytimeRate: form.daytimeRate,
+            nighttimeRate: form.nighttimeRate,
+            gapEnabled: form.gapEnabled,
+            gapRate: form.gapRate,
+          })
+        }
+        saving={saving === 'Pricing'}
+      >
+        <div className="grid grid-cols-2 gap-4">
+          <NumberField label="Daytime Rate (₱/hr)" value={form.daytimeRate} onChange={(v) => set('daytimeRate', v)} />
+          <NumberField label="Night Rate (₱/hr)" value={form.nighttimeRate} onChange={(v) => set('nighttimeRate', v)} />
+        </div>
+        <label className="mt-4 flex items-center gap-2">
+          <input type="checkbox" checked={form.gapEnabled} onChange={(e) => set('gapEnabled', e.target.checked)} className="h-4 w-4 accent-lime-500" />
+          <span className="text-sm font-semibold text-cream">
+            Allow bookings during the gap between daytime and nighttime ({form.daytimeEnd}–{form.nighttimeStart})
+          </span>
+        </label>
+        {form.gapEnabled && (
+          <div className="mt-3 max-w-xs">
+            <NumberField label="Gap Rate (₱/hr)" value={form.gapRate} onChange={(v) => set('gapRate', v)} />
+          </div>
+        )}
+      </Section>
+
+      <Section
+        title="Operating Hours & Schedule"
+        onSave={() =>
+          save('Operating hours', {
+            openingTime: form.openingTime,
+            closingTime: form.closingTime,
+            daytimeStart: form.daytimeStart,
+            daytimeEnd: form.daytimeEnd,
+            nighttimeStart: form.nighttimeStart,
+            nighttimeEnd: form.nighttimeEnd,
+          })
+        }
+        saving={saving === 'Operating hours'}
+      >
+        <div className="grid grid-cols-2 gap-4">
+          <TimeField label="Booking Opens" value={form.openingTime} onChange={(v) => set('openingTime', v)} />
+          <TimeField label="Booking Closes" value={form.closingTime} onChange={(v) => set('closingTime', v)} />
+          <TimeField label="Daytime Start" value={form.daytimeStart} onChange={(v) => set('daytimeStart', v)} />
+          <TimeField label="Daytime End" value={form.daytimeEnd} onChange={(v) => set('daytimeEnd', v)} />
+          <TimeField label="Night Start" value={form.nighttimeStart} onChange={(v) => set('nighttimeStart', v)} />
+          <TimeField label="Night End" value={form.nighttimeEnd} onChange={(v) => set('nighttimeEnd', v)} />
+        </div>
+        <p className="mt-3 text-xs text-cream-dim">
+          Online booking is currently limited to {form.openingTime}–{form.closingTime}, even though the business is called
+          "24/7". Change "Booking Opens/Closes" above once you're ready to allow booking outside these hours.
+        </p>
+      </Section>
+
+      <Section
+        title="Contact Information"
+        onSave={() => save('Contact info', { phone: form.phone, facebook: form.facebook, messenger: form.messenger })}
+        saving={saving === 'Contact info'}
+      >
+        <TextField label="Mobile Number" value={form.phone} onChange={(v) => set('phone', v)} />
+        <TextField label="Facebook Page" value={form.facebook} onChange={(v) => set('facebook', v)} />
+        <TextField label="Messenger Link" value={form.messenger} onChange={(v) => set('messenger', v)} />
+      </Section>
+
+      <Section
+        title="Court Location"
+        onSave={() => save('Location', { address: form.address, mapsUrl: form.mapsUrl })}
+        saving={saving === 'Location'}
+      >
+        <TextField label="Address" value={form.address} onChange={(v) => set('address', v)} />
+        <TextField label="Google Maps URL (optional)" value={form.mapsUrl} onChange={(v) => set('mapsUrl', v)} />
+      </Section>
+
+      <Section
+        title="GCash Payment Details"
+        onSave={() =>
+          save('GCash settings', {
+            gcashNumber: form.gcashNumber,
+            gcashAccountName: form.gcashAccountName,
+            gcashQrCodeUrl: form.gcashQrCodeUrl,
+          })
+        }
+        saving={saving === 'GCash settings'}
+      >
+        <TextField label="GCash Number" value={form.gcashNumber} onChange={(v) => set('gcashNumber', v)} />
+        <TextField label="GCash Account Name" value={form.gcashAccountName} onChange={(v) => set('gcashAccountName', v)} />
+        <TextField label="QR Code Image URL (optional)" value={form.gcashQrCodeUrl} onChange={(v) => set('gcashQrCodeUrl', v)} />
+      </Section>
+
+      {!isSupabaseConfigured && (
+        <Section title="Admin Password (Demo Mode)" onSave={() => save('Admin password', { adminPassword: form.adminPassword })} saving={saving === 'Admin password'}>
+          <TextField label="Admin Password" value={form.adminPassword} onChange={(v) => set('adminPassword', v)} />
+          <p className="mt-2 text-xs text-cream-dim">
+            This simple password is used because Supabase is not connected. Connect Supabase and create an admin user
+            in Supabase Auth for production-grade security.
+          </p>
+        </Section>
+      )}
+    </div>
+  )
+}
+
+function Section({
+  title,
+  children,
+  onSave,
+  saving,
+}: {
+  title: string
+  children: React.ReactNode
+  onSave: () => void
+  saving: boolean
+}) {
+  return (
+    <Card className="p-5">
+      <p className="mb-4 font-display font-bold text-cream">{title}</p>
+      <div className="space-y-4">{children}</div>
+      <Button size="md" className="mt-5" onClick={onSave} disabled={saving}>
+        {saving ? 'Saving…' : 'Save'}
+      </Button>
+    </Card>
+  )
+}
+
+function TextField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-sm font-semibold text-cream-dim">{label}</span>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-11 w-full rounded-xl border border-white/10 bg-court-800 px-3 text-sm text-cream focus:border-lime-500/50 focus:outline-none"
+      />
+    </label>
+  )
+}
+
+function NumberField({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-sm font-semibold text-cream-dim">{label}</span>
+      <input
+        type="number"
+        min={0}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="h-11 w-full rounded-xl border border-white/10 bg-court-800 px-3 text-sm text-cream focus:border-lime-500/50 focus:outline-none"
+      />
+    </label>
+  )
+}
+
+function TimeField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-sm font-semibold text-cream-dim">{label}</span>
+      <input
+        type="time"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-11 w-full rounded-xl border border-white/10 bg-court-800 px-3 text-sm text-cream focus:border-lime-500/50 focus:outline-none"
+      />
+    </label>
+  )
+}
