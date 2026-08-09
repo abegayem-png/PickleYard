@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom'
 import { useSettings } from '../../context/SettingsContext'
-import { formatTime12h } from '../../lib/time'
 
 export default function Footer() {
   const { settings } = useSettings()
@@ -18,9 +17,7 @@ export default function Footer() {
 
           <div>
             <p className="font-display text-xs font-bold uppercase tracking-widest text-cream-dim">Court Hours</p>
-            <p className="mt-2 text-sm text-cream">
-              {formatTime12h(settings.openingTime)} – {formatTime12h(settings.closingTime)}
-            </p>
+            <p className="mt-2 text-sm text-cream">24/7</p>
             <p className="mt-3 text-sm text-cream-dim">
               Daytime: <span className="text-cream">₱{settings.daytimeRate}/hour</span>
             </p>
@@ -31,8 +28,17 @@ export default function Footer() {
 
           <div>
             <p className="font-display text-xs font-bold uppercase tracking-widest text-cream-dim">Contact</p>
-            <p className="mt-2 text-sm text-cream">{settings.phone}</p>
-            <p className="text-sm text-cream-dim">{settings.facebook}</p>
+            <a href={`tel:${settings.phone.replace(/\s/g, '')}`} className="mt-2 block text-sm text-cream hover:text-lime-500">
+              {settings.phone}
+            </a>
+            <a
+              href={settings.facebook}
+              target="_blank"
+              rel="noreferrer"
+              className="block text-sm text-cream-dim hover:text-lime-500"
+            >
+              PickleYard Compostela
+            </a>
           </div>
         </div>
 

@@ -80,7 +80,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  businessName: '24/7 Pickleball Play',
+  businessName: 'PickleYard Compostela',
   tagline: 'Play More. Play Anytime.',
   daytimeRate: 150,
   nighttimeRate: 180,
@@ -92,8 +92,8 @@ export const DEFAULT_SETTINGS: Settings = {
   closingTime: '22:00',
   gapEnabled: false,
   gapRate: 150,
-  phone: '+63 9XX XXX XXXX',
-  facebook: 'facebook.com/247pickleballplay',
+  phone: '+63 935 922 0897',
+  facebook: 'https://www.facebook.com/profile.php?id=61592997513033',
   messenger: 'm.me/247pickleballplay',
   address: 'Court address — set this in Admin Settings',
   mapsUrl: '',

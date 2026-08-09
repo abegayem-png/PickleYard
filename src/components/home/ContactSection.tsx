@@ -20,7 +20,7 @@ export default function ContactSection() {
 
         <Card className="mt-8 divide-y divide-white/5 p-2">
           <ContactRow icon="📞" label="Mobile Number" value={settings.phone} href={`tel:${settings.phone.replace(/\s/g, '')}`} />
-          <ContactRow icon="📘" label="Facebook Page" value={settings.facebook} href={toUrl(settings.facebook)} />
+          <ContactRow icon="📘" label="Facebook Page" value="PickleYard Compostela" href={toUrl(settings.facebook)} />
           <ContactRow icon="💬" label="Messenger" value={settings.messenger} href={toUrl(settings.messenger)} />
         </Card>
 
