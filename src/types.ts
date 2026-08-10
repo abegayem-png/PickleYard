@@ -88,10 +88,16 @@ export const DEFAULT_SETTINGS: Settings = {
   daytimeEnd: '17:00',
   nighttimeStart: '18:00',
   nighttimeEnd: '22:00',
-  openingTime: '06:00',
-  closingTime: '22:00',
-  gapEnabled: false,
-  gapRate: 150,
+  // "24:00" means midnight at the end of the booking day (see lib/time.ts /
+  // lib/pricing.ts, both of which treat hour 24 as wrapping to 00:00).
+  openingTime: '00:00',
+  closingTime: '24:00',
+  // Daytime (6 AM-5 PM) and nighttime (6 PM-10 PM) keep their existing rates.
+  // Every other hour of the day (the 5-6 PM buffer, and 10 PM-6 AM overnight)
+  // is priced as the "gap" so the whole day is bookable at a single admin-
+  // editable overnight rate, without touching the existing day/night rates.
+  gapEnabled: true,
+  gapRate: 180,
   phone: '+63 935 922 0897',
   facebook: 'https://www.facebook.com/profile.php?id=61592997513033',
   messenger: 'm.me/247pickleballplay',

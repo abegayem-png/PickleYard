@@ -60,13 +60,20 @@ export default function AdminSettings() {
         <label className="mt-4 flex items-center gap-2">
           <input type="checkbox" checked={form.gapEnabled} onChange={(e) => set('gapEnabled', e.target.checked)} className="h-4 w-4 accent-lime-500" />
           <span className="text-sm font-semibold text-cream">
-            Allow bookings during the gap between daytime and nighttime ({form.daytimeEnd}–{form.nighttimeStart})
+            Allow bookings outside daytime/nighttime hours (e.g. the {form.daytimeEnd}–{form.nighttimeStart} buffer, or
+            overnight)
           </span>
         </label>
         {form.gapEnabled && (
           <div className="mt-3 max-w-xs">
-            <NumberField label="Gap Rate (₱/hr)" value={form.gapRate} onChange={(v) => set('gapRate', v)} />
+            <NumberField label="Overnight / Off-Peak Rate (₱/hr)" value={form.gapRate} onChange={(v) => set('gapRate', v)} />
           </div>
+        )}
+        {!form.gapEnabled && (
+          <p className="mt-3 text-xs text-cream-dim">
+            With this off, only the {form.daytimeStart}–{form.daytimeEnd} and {form.nighttimeStart}–{form.nighttimeEnd}
+            {' '}windows are bookable — enable it to make the rest of the day (including overnight) bookable too.
+          </p>
         )}
       </Section>
 
@@ -84,17 +91,42 @@ export default function AdminSettings() {
         }
         saving={saving === 'Operating hours'}
       >
-        <div className="grid grid-cols-2 gap-4">
-          <TimeField label="Booking Opens" value={form.openingTime} onChange={(v) => set('openingTime', v)} />
-          <TimeField label="Booking Closes" value={form.closingTime} onChange={(v) => set('closingTime', v)} />
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={form.openingTime === '00:00' && form.closingTime === '24:00'}
+            onChange={(e) =>
+              setForm((f) => ({
+                ...f,
+                openingTime: e.target.checked ? '00:00' : '06:00',
+                closingTime: e.target.checked ? '24:00' : '22:00',
+              }))
+            }
+            className="h-4 w-4 accent-lime-500"
+          />
+          <span className="text-sm font-semibold text-cream">Open 24 hours (bookable any time, including overnight)</span>
+        </label>
+
+        {form.openingTime === '00:00' && form.closingTime === '24:00' ? (
+          <p className="mt-3 text-xs text-cream-dim">
+            Every hour of the day is bookable. Turn this off to restrict online booking to a specific window instead.
+          </p>
+        ) : (
+          <div className="mt-4 grid grid-cols-2 gap-4">
+            <TimeField label="Booking Opens" value={form.openingTime} onChange={(v) => set('openingTime', v)} />
+            <TimeField label="Booking Closes" value={form.closingTime} onChange={(v) => set('closingTime', v)} />
+          </div>
+        )}
+
+        <div className="mt-4 grid grid-cols-2 gap-4">
           <TimeField label="Daytime Start" value={form.daytimeStart} onChange={(v) => set('daytimeStart', v)} />
           <TimeField label="Daytime End" value={form.daytimeEnd} onChange={(v) => set('daytimeEnd', v)} />
           <TimeField label="Night Start" value={form.nighttimeStart} onChange={(v) => set('nighttimeStart', v)} />
           <TimeField label="Night End" value={form.nighttimeEnd} onChange={(v) => set('nighttimeEnd', v)} />
         </div>
         <p className="mt-3 text-xs text-cream-dim">
-          Online booking is currently limited to {form.openingTime}–{form.closingTime}, even though the business is called
-          "24/7". Change "Booking Opens/Closes" above once you're ready to allow booking outside these hours.
+          Daytime and Night define the two priced windows above; anything outside them (including overnight) follows
+          the "Overnight / Off-Peak Rate" set in Court Pricing once that's enabled.
         </p>
       </Section>
 
