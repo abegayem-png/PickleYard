@@ -16,8 +16,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   const refresh = useCallback(async () => {
-    const s = await store.getSettings()
-    setSettings(s)
+    try {
+      const s = await store.getSettings()
+      setSettings(s)
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to load settings:', err)
+    }
   }, [])
 
   useEffect(() => {

@@ -101,7 +101,17 @@ export const supabaseStore: DataStore = {
 
   async updateSettings(patch) {
     const row = settingsToRow(patch)
-    const { data, error } = await sb().from('settings').update(row).eq('id', 1).select('*').single()
+    // Upsert instead of update: if the singleton settings row (id = 1) was
+    // never seeded, a plain `.update()` matches zero rows and `.single()`
+    // throws "no rows returned" — which silently failed before because the
+    // caller had no error handling. Upsert creates the row on first save and
+    // updates it thereafter, and (per PostgREST upsert semantics) only ever
+    // touches the columns present in `row`, so unrelated settings are safe.
+    const { data, error } = await sb()
+      .from('settings')
+      .upsert({ id: 1, ...row }, { onConflict: 'id' })
+      .select('*')
+      .single()
     if (error) throw error
     return settingsFromRow(data)
   },

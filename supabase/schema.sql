@@ -99,6 +99,13 @@ create table if not exists settings (
   constraint settings_singleton check (id = 1)
 );
 
+-- Defensive guards in case `settings` already existed from an earlier,
+-- partial version of this script — safe no-ops if the columns are present.
+alter table settings add column if not exists maps_url text not null default '';
+alter table settings add column if not exists gcash_number text not null default '';
+alter table settings add column if not exists gcash_account_name text not null default '';
+alter table settings add column if not exists gcash_qr_code_url text not null default '';
+
 insert into settings (id) values (1) on conflict (id) do nothing;
 
 -- ---------------------------------------------------------------------------
@@ -175,11 +182,18 @@ create policy "admins can manage blocked slots" on blocked_slots
   with check (true);
 
 -- settings: publicly readable (rates, hours, contact info shown on the
--- website), only admins can update.
+-- website), only admins can insert/update. INSERT is required (in addition
+-- to UPDATE) because Admin Settings saves via upsert, which creates the
+-- id = 1 row on first save if the seed insert above never ran.
 drop policy if exists "anyone can view settings" on settings;
 create policy "anyone can view settings" on settings
   for select to anon, authenticated
   using (true);
+
+drop policy if exists "admins can insert settings" on settings;
+create policy "admins can insert settings" on settings
+  for insert to authenticated
+  with check (id = 1);
 
 drop policy if exists "admins can update settings" on settings;
 create policy "admins can update settings" on settings

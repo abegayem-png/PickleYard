@@ -10,6 +10,7 @@ export default function AdminSettings() {
   const [form, setForm] = useState<Settings>(settings)
   const [saving, setSaving] = useState<string | null>(null)
   const [savedMsg, setSavedMsg] = useState<string | null>(null)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   useEffect(() => setForm(settings), [settings])
 
@@ -20,10 +21,19 @@ export default function AdminSettings() {
   async function save(section: string, patch: Partial<Settings>) {
     setSaving(section)
     setSavedMsg(null)
+    setErrorMsg(null)
     try {
       await updateSettings(patch)
-      setSavedMsg(`${section} saved.`)
-      setTimeout(() => setSavedMsg(null), 2500)
+      setSavedMsg('Settings saved successfully.')
+      setTimeout(() => setSavedMsg(null), 3000)
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`Failed to save "${section}":`, err)
+      setErrorMsg(
+        err instanceof Error
+          ? `Couldn't save "${section}": ${err.message}`
+          : `Couldn't save "${section}". Please try again.`,
+      )
     } finally {
       setSaving(null)
     }
@@ -31,10 +41,13 @@ export default function AdminSettings() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <h1 className="font-display text-2xl font-extrabold text-cream">Settings</h1>
-        {savedMsg && <span className="text-sm font-semibold text-lime-500">{savedMsg}</span>}
+        {savedMsg && <span className="text-sm font-semibold text-lime-500">✓ {savedMsg}</span>}
       </div>
+      {errorMsg && (
+        <div className="rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-300">{errorMsg}</div>
+      )}
 
       <Section title="Business Info" onSave={() => save('Business info', { businessName: form.businessName, tagline: form.tagline })} saving={saving === 'Business info'}>
         <TextField label="Business Name" value={form.businessName} onChange={(v) => set('businessName', v)} />

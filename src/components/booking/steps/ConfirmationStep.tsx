@@ -38,6 +38,13 @@ export default function ConfirmationStep({ booking, onBookAnother }: { booking: 
             <Row label="GCash Number" value={settings.gcashNumber} />
             <Row label="Account Name" value={settings.gcashAccountName} />
           </div>
+          {settings.gcashQrCodeUrl && (
+            <img
+              src={settings.gcashQrCodeUrl}
+              alt="GCash QR code"
+              className="mx-auto mt-4 h-48 w-48 rounded-xl border border-white/10 bg-white object-contain p-2"
+            />
+          )}
           <p className="mt-3 text-xs text-cream-dim">
             Please send ₱{booking.totalAmount} and keep your reference number. Your booking will be marked paid once confirmed by the court staff.
           </p>
