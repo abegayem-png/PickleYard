@@ -1,4 +1,12 @@
-import type { Booking, BookingStatus, PaymentStatus, BlockedSlot, Settings } from '../../types'
+import type {
+  Booking,
+  BookingStatus,
+  PaymentStatus,
+  BlockedSlot,
+  Settings,
+  OpenPlaySession,
+  OpenPlayRegistration,
+} from '../../types'
 import { DEFAULT_SETTINGS } from '../../types'
 import { supabase } from '../supabaseClient'
 import type { AvailabilityRow, DataStore } from './types'
@@ -55,6 +63,17 @@ function settingsFromRow(row: Record<string, unknown>): Settings {
     gcashAccountName: (row.gcash_account_name as string) ?? DEFAULT_SETTINGS.gcashAccountName,
     gcashQrCodeUrl: (row.gcash_qr_code_url as string) ?? DEFAULT_SETTINGS.gcashQrCodeUrl,
     adminPassword: DEFAULT_SETTINGS.adminPassword, // admin auth is handled via Supabase Auth, not this field
+
+    openPlayEnabled: Boolean(row.open_play_enabled ?? DEFAULT_SETTINGS.openPlayEnabled),
+    openPlayScheduleType: (row.open_play_schedule_type as Settings['openPlayScheduleType']) ?? DEFAULT_SETTINGS.openPlayScheduleType,
+    openPlayRecurringDays: (row.open_play_recurring_days as number[]) ?? DEFAULT_SETTINGS.openPlayRecurringDays,
+    openPlayRecurringStartDate: (row.open_play_recurring_start_date as string) ?? DEFAULT_SETTINGS.openPlayRecurringStartDate,
+    openPlayRecurringEndDate: (row.open_play_recurring_end_date as string) ?? DEFAULT_SETTINGS.openPlayRecurringEndDate,
+    openPlayStartTime: ((row.open_play_start_time as string) ?? DEFAULT_SETTINGS.openPlayStartTime).slice(0, 5),
+    openPlayEndTime: ((row.open_play_end_time as string) ?? DEFAULT_SETTINGS.openPlayEndTime).slice(0, 5),
+    openPlayPrice: Number(row.open_play_price ?? DEFAULT_SETTINGS.openPlayPrice),
+    openPlayPlayerLimit: Number(row.open_play_player_limit ?? DEFAULT_SETTINGS.openPlayPlayerLimit),
+    openPlayBlockBookings: Boolean(row.open_play_block_bookings ?? DEFAULT_SETTINGS.openPlayBlockBookings),
   }
 }
 
@@ -81,14 +100,62 @@ function settingsToRow(s: Partial<Settings>): Record<string, unknown> {
     gcashAccountName: 'gcash_account_name',
     gcashQrCodeUrl: 'gcash_qr_code_url',
     adminPassword: 'admin_password',
+    openPlayEnabled: 'open_play_enabled',
+    openPlayScheduleType: 'open_play_schedule_type',
+    openPlayRecurringDays: 'open_play_recurring_days',
+    openPlayRecurringStartDate: 'open_play_recurring_start_date',
+    openPlayRecurringEndDate: 'open_play_recurring_end_date',
+    openPlayStartTime: 'open_play_start_time',
+    openPlayEndTime: 'open_play_end_time',
+    openPlayPrice: 'open_play_price',
+    openPlayPlayerLimit: 'open_play_player_limit',
+    openPlayBlockBookings: 'open_play_block_bookings',
   }
   const row: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(s)) {
     if (key === 'adminPassword') continue
     const column = map[key as keyof Settings]
-    if (column) row[column] = value
+    if (column) {
+      // Empty-string "no end date" needs to become SQL NULL for a `date` column.
+      row[column] = key === 'openPlayRecurringEndDate' && value === '' ? null : value
+    }
   }
   return row
+}
+
+function openPlaySessionFromRow(row: Record<string, unknown>): OpenPlaySession {
+  return {
+    id: row.id as string,
+    sessionDate: row.session_date as string,
+    startTime: (row.start_time as string).slice(0, 5),
+    endTime: (row.end_time as string).slice(0, 5),
+    pricePerPlayer: Number(row.price_per_player),
+    playerLimit: row.player_limit as number,
+    status: row.status as OpenPlaySession['status'],
+    source: row.source as OpenPlaySession['source'],
+    createdAt: row.created_at as string,
+  }
+}
+
+function openPlaySessionToRow(input: Partial<import('../../types').OpenPlaySessionInput>): Record<string, unknown> {
+  const row: Record<string, unknown> = {}
+  if (input.sessionDate !== undefined) row.session_date = input.sessionDate
+  if (input.startTime !== undefined) row.start_time = input.startTime
+  if (input.endTime !== undefined) row.end_time = input.endTime
+  if (input.pricePerPlayer !== undefined) row.price_per_player = input.pricePerPlayer
+  if (input.playerLimit !== undefined) row.player_limit = input.playerLimit
+  if (input.source !== undefined) row.source = input.source
+  return row
+}
+
+function openPlayRegistrationFromRow(row: Record<string, unknown>): OpenPlayRegistration {
+  return {
+    id: row.id as string,
+    sessionId: row.session_id as string,
+    playerName: row.player_name as string,
+    mobileNumber: row.mobile_number as string,
+    createdAt: row.created_at as string,
+  }
 }
 
 export const supabaseStore: DataStore = {
@@ -261,6 +328,98 @@ export const supabaseStore: DataStore = {
 
   async removeBlockedSlot(id) {
     const { error } = await sb().from('blocked_slots').delete().eq('id', id)
+    if (error) throw error
+  },
+
+  async listOpenPlaySessions() {
+    const [sessionsRes, countsRes] = await Promise.all([
+      sb().from('open_play_sessions').select('*').order('session_date', { ascending: true }).order('start_time', { ascending: true }),
+      sb().from('open_play_registration_counts').select('*'),
+    ])
+    if (sessionsRes.error) throw sessionsRes.error
+    if (countsRes.error) throw countsRes.error
+    const countMap = new Map<string, number>((countsRes.data ?? []).map((c) => [c.session_id as string, Number(c.registered_count)]))
+    return (sessionsRes.data ?? []).map((row) => ({
+      ...openPlaySessionFromRow(row),
+      registeredCount: countMap.get(row.id as string) ?? 0,
+    }))
+  },
+
+  async getOpenPlaySessionsForDate(date) {
+    const { data, error } = await sb()
+      .from('open_play_sessions')
+      .select('*')
+      .eq('session_date', date)
+      .eq('status', 'scheduled')
+    if (error) throw error
+    return (data ?? []).map(openPlaySessionFromRow)
+  },
+
+  async createOpenPlaySession(input) {
+    const { data, error } = await sb()
+      .from('open_play_sessions')
+      .insert(openPlaySessionToRow(input))
+      .select('*')
+      .single()
+    if (error) throw error
+    return openPlaySessionFromRow(data)
+  },
+
+  async createOpenPlaySessions(inputs) {
+    if (inputs.length === 0) return []
+    const { data, error } = await sb()
+      .from('open_play_sessions')
+      .insert(inputs.map(openPlaySessionToRow))
+      .select('*')
+    if (error) throw error
+    return (data ?? []).map(openPlaySessionFromRow)
+  },
+
+  async updateOpenPlaySession(id, patch) {
+    const { data, error } = await sb()
+      .from('open_play_sessions')
+      .update(openPlaySessionToRow(patch))
+      .eq('id', id)
+      .select('*')
+      .single()
+    if (error) throw error
+    return openPlaySessionFromRow(data)
+  },
+
+  async cancelOpenPlaySession(id) {
+    const { data, error } = await sb()
+      .from('open_play_sessions')
+      .update({ status: 'cancelled' })
+      .eq('id', id)
+      .select('*')
+      .single()
+    if (error) throw error
+    return openPlaySessionFromRow(data)
+  },
+
+  async listOpenPlayRegistrations(sessionId) {
+    const { data, error } = await sb()
+      .from('open_play_registrations')
+      .select('*')
+      .eq('session_id', sessionId)
+      .order('created_at', { ascending: true })
+    if (error) throw error
+    return (data ?? []).map(openPlayRegistrationFromRow)
+  },
+
+  async addOpenPlayRegistration(input) {
+    const row = {
+      session_id: input.sessionId,
+      player_name: input.playerName,
+      mobile_number: input.mobileNumber,
+    }
+    const { data, error } = await sb().from('open_play_registrations').insert(row).select('*').single()
+    if (error) throw error
+    return openPlayRegistrationFromRow(data)
+  },
+
+  async removeOpenPlayRegistration(id) {
+    const { error } = await sb().from('open_play_registrations').delete().eq('id', id)
     if (error) throw error
   },
 }

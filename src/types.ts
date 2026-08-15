@@ -45,6 +45,49 @@ export interface HourRate {
   period: 'daytime' | 'nighttime' | 'gap'
 }
 
+export type OpenPlayScheduleType = 'specific' | 'recurring'
+export type OpenPlaySessionStatus = 'scheduled' | 'cancelled'
+export type OpenPlaySessionSource = 'specific' | 'recurring'
+
+export interface OpenPlaySession {
+  id: string
+  sessionDate: string // YYYY-MM-DD
+  startTime: string // HH:MM
+  endTime: string // HH:MM
+  pricePerPlayer: number
+  playerLimit: number
+  status: OpenPlaySessionStatus
+  source: OpenPlaySessionSource
+  createdAt: string
+}
+
+export interface OpenPlaySessionWithCount extends OpenPlaySession {
+  registeredCount: number
+}
+
+export interface OpenPlaySessionInput {
+  sessionDate: string
+  startTime: string
+  endTime: string
+  pricePerPlayer: number
+  playerLimit: number
+  source: OpenPlaySessionSource
+}
+
+export interface OpenPlayRegistration {
+  id: string
+  sessionId: string
+  playerName: string
+  mobileNumber: string
+  createdAt: string
+}
+
+export interface OpenPlayRegistrationInput {
+  sessionId: string
+  playerName: string
+  mobileNumber: string
+}
+
 export interface BlockedSlot {
   id: string
   date: string // YYYY-MM-DD
@@ -77,6 +120,17 @@ export interface Settings {
   gcashAccountName: string
   gcashQrCodeUrl: string
   adminPassword: string
+
+  openPlayEnabled: boolean
+  openPlayScheduleType: OpenPlayScheduleType
+  openPlayRecurringDays: number[] // 0 = Sunday ... 6 = Saturday
+  openPlayRecurringStartDate: string // YYYY-MM-DD
+  openPlayRecurringEndDate: string // '' = no end date, runs until turned off
+  openPlayStartTime: string // HH:MM
+  openPlayEndTime: string // HH:MM
+  openPlayPrice: number // per player
+  openPlayPlayerLimit: number
+  openPlayBlockBookings: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -107,4 +161,15 @@ export const DEFAULT_SETTINGS: Settings = {
   gcashAccountName: 'Set in Admin Settings',
   gcashQrCodeUrl: '',
   adminPassword: 'admin123',
+
+  openPlayEnabled: false,
+  openPlayScheduleType: 'specific',
+  openPlayRecurringDays: [],
+  openPlayRecurringStartDate: '',
+  openPlayRecurringEndDate: '',
+  openPlayStartTime: '18:00',
+  openPlayEndTime: '23:00',
+  openPlayPrice: 50,
+  openPlayPlayerLimit: 16,
+  openPlayBlockBookings: true,
 }

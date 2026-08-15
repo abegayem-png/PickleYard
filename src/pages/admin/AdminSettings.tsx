@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 import { useSettings } from '../../context/SettingsContext'
 import { isSupabaseConfigured } from '../../lib/supabaseClient'
 import type { Settings } from '../../types'
-import Button from '../../components/ui/Button'
-import Card from '../../components/ui/Card'
+import { Section, TextField, NumberField, TimeField } from '../../components/admin/SettingsFields'
+import OpenPlaySettingsPanel from '../../components/admin/OpenPlaySettingsPanel'
 
 export default function AdminSettings() {
   const { settings, updateSettings } = useSettings()
@@ -187,71 +187,8 @@ export default function AdminSettings() {
           </p>
         </Section>
       )}
+
+      <OpenPlaySettingsPanel />
     </div>
-  )
-}
-
-function Section({
-  title,
-  children,
-  onSave,
-  saving,
-}: {
-  title: string
-  children: React.ReactNode
-  onSave: () => void
-  saving: boolean
-}) {
-  return (
-    <Card className="p-5">
-      <p className="mb-4 font-display font-bold text-cream">{title}</p>
-      <div className="space-y-4">{children}</div>
-      <Button size="md" className="mt-5" onClick={onSave} disabled={saving}>
-        {saving ? 'Saving…' : 'Save'}
-      </Button>
-    </Card>
-  )
-}
-
-function TextField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-sm font-semibold text-cream-dim">{label}</span>
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-11 w-full rounded-xl border border-white/10 bg-court-800 px-3 text-sm text-cream focus:border-lime-500/50 focus:outline-none"
-      />
-    </label>
-  )
-}
-
-function NumberField({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-sm font-semibold text-cream-dim">{label}</span>
-      <input
-        type="number"
-        min={0}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="h-11 w-full rounded-xl border border-white/10 bg-court-800 px-3 text-sm text-cream focus:border-lime-500/50 focus:outline-none"
-      />
-    </label>
-  )
-}
-
-function TimeField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-sm font-semibold text-cream-dim">{label}</span>
-      <input
-        type="time"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-11 w-full rounded-xl border border-white/10 bg-court-800 px-3 text-sm text-cream focus:border-lime-500/50 focus:outline-none"
-      />
-    </label>
   )
 }

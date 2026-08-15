@@ -1,4 +1,16 @@
-import type { Booking, BookingInput, BookingStatus, PaymentStatus, BlockedSlot, Settings } from '../../types'
+import type {
+  Booking,
+  BookingInput,
+  BookingStatus,
+  PaymentStatus,
+  BlockedSlot,
+  Settings,
+  OpenPlaySession,
+  OpenPlaySessionInput,
+  OpenPlaySessionWithCount,
+  OpenPlayRegistration,
+  OpenPlayRegistrationInput,
+} from '../../types'
 
 /** Lightweight shape used only for availability/pricing checks — no customer PII. */
 export interface AvailabilityRow {
@@ -31,4 +43,17 @@ export interface DataStore {
   listBlockedSlots(): Promise<BlockedSlot[]>
   addBlockedSlot(input: Omit<BlockedSlot, 'id' | 'createdAt'>): Promise<BlockedSlot>
   removeBlockedSlot(id: string): Promise<void>
+
+  /** All sessions (any status) with their public registration counts. */
+  listOpenPlaySessions(): Promise<OpenPlaySessionWithCount[]>
+  /** Scheduled-only sessions for a date, used to block regular court bookings. */
+  getOpenPlaySessionsForDate(date: string): Promise<OpenPlaySession[]>
+  createOpenPlaySession(input: OpenPlaySessionInput): Promise<OpenPlaySession>
+  createOpenPlaySessions(inputs: OpenPlaySessionInput[]): Promise<OpenPlaySession[]>
+  updateOpenPlaySession(id: string, patch: Partial<OpenPlaySessionInput>): Promise<OpenPlaySession>
+  cancelOpenPlaySession(id: string): Promise<OpenPlaySession>
+
+  listOpenPlayRegistrations(sessionId: string): Promise<OpenPlayRegistration[]>
+  addOpenPlayRegistration(input: OpenPlayRegistrationInput): Promise<OpenPlayRegistration>
+  removeOpenPlayRegistration(id: string): Promise<void>
 }

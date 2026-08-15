@@ -1,4 +1,12 @@
-import type { Booking, BookingStatus, PaymentStatus, BlockedSlot, Settings } from '../../types'
+import type {
+  Booking,
+  BookingStatus,
+  PaymentStatus,
+  BlockedSlot,
+  Settings,
+  OpenPlaySession,
+  OpenPlayRegistration,
+} from '../../types'
 import { DEFAULT_SETTINGS } from '../../types'
 import { generateBookingReference } from '../pricing'
 import type { AvailabilityRow, DataStore } from './types'
@@ -7,6 +15,8 @@ const KEYS = {
   bookings: 'pkl_bookings',
   blockedSlots: 'pkl_blocked_slots',
   settings: 'pkl_settings',
+  openPlaySessions: 'pkl_open_play_sessions',
+  openPlayRegistrations: 'pkl_open_play_registrations',
 }
 
 function read<T>(key: string, fallback: T): T {
@@ -142,6 +152,89 @@ export const localStore: DataStore = {
     write(
       KEYS.blockedSlots,
       slots.filter((s) => s.id !== id),
+    )
+  },
+
+  async listOpenPlaySessions() {
+    const sessions = read<OpenPlaySession[]>(KEYS.openPlaySessions, [])
+    const registrations = read<OpenPlayRegistration[]>(KEYS.openPlayRegistrations, [])
+    return [...sessions]
+      .sort((a, b) =>
+        a.sessionDate === b.sessionDate ? a.startTime.localeCompare(b.startTime) : a.sessionDate.localeCompare(b.sessionDate),
+      )
+      .map((s) => ({ ...s, registeredCount: registrations.filter((r) => r.sessionId === s.id).length }))
+  },
+
+  async getOpenPlaySessionsForDate(date) {
+    const sessions = read<OpenPlaySession[]>(KEYS.openPlaySessions, [])
+    return sessions.filter((s) => s.sessionDate === date && s.status === 'scheduled')
+  },
+
+  async createOpenPlaySession(input) {
+    const sessions = read<OpenPlaySession[]>(KEYS.openPlaySessions, [])
+    const session: OpenPlaySession = {
+      id: newId(),
+      status: 'scheduled',
+      createdAt: new Date().toISOString(),
+      ...input,
+    }
+    sessions.push(session)
+    write(KEYS.openPlaySessions, sessions)
+    return session
+  },
+
+  async createOpenPlaySessions(inputs) {
+    const sessions = read<OpenPlaySession[]>(KEYS.openPlaySessions, [])
+    const created = inputs.map(
+      (input): OpenPlaySession => ({
+        id: newId(),
+        status: 'scheduled',
+        createdAt: new Date().toISOString(),
+        ...input,
+      }),
+    )
+    write(KEYS.openPlaySessions, [...sessions, ...created])
+    return created
+  },
+
+  async updateOpenPlaySession(id, patch) {
+    const sessions = read<OpenPlaySession[]>(KEYS.openPlaySessions, [])
+    const idx = sessions.findIndex((s) => s.id === id)
+    if (idx === -1) throw new Error('Open Play session not found')
+    sessions[idx] = { ...sessions[idx], ...patch }
+    write(KEYS.openPlaySessions, sessions)
+    return sessions[idx]
+  },
+
+  async cancelOpenPlaySession(id) {
+    const sessions = read<OpenPlaySession[]>(KEYS.openPlaySessions, [])
+    const idx = sessions.findIndex((s) => s.id === id)
+    if (idx === -1) throw new Error('Open Play session not found')
+    sessions[idx] = { ...sessions[idx], status: 'cancelled' }
+    write(KEYS.openPlaySessions, sessions)
+    return sessions[idx]
+  },
+
+  async listOpenPlayRegistrations(sessionId) {
+    const registrations = read<OpenPlayRegistration[]>(KEYS.openPlayRegistrations, [])
+    return registrations
+      .filter((r) => r.sessionId === sessionId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  },
+
+  async addOpenPlayRegistration(input) {
+    const registrations = read<OpenPlayRegistration[]>(KEYS.openPlayRegistrations, [])
+    const registration: OpenPlayRegistration = { id: newId(), createdAt: new Date().toISOString(), ...input }
+    registrations.push(registration)
+    write(KEYS.openPlayRegistrations, registrations)
+    return registration
+  },
+
+  async removeOpenPlayRegistration(id) {
+    const registrations = read<OpenPlayRegistration[]>(KEYS.openPlayRegistrations, [])
+    write(
+      KEYS.openPlayRegistrations,
+      registrations.filter((r) => r.id !== id),
     )
   },
 }

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useAdminData } from '../../hooks/useAdminData'
+import { useOpenPlaySessions } from '../../hooks/useOpenPlaySessions'
 import { useSettings } from '../../context/SettingsContext'
 import MiniCalendar from '../../components/booking/MiniCalendar'
 import Card from '../../components/ui/Card'
@@ -29,13 +30,23 @@ const STATUS_TONE: Record<SlotStatus, 'cream' | 'pending' | 'confirmed' | 'paid'
 export default function AdminCalendar() {
   const { settings } = useSettings()
   const data = useAdminData()
+  const openPlay = useOpenPlaySessions()
   const [selectedDate, setSelectedDate] = useState(todayISO())
 
   const markedDates = useMemo(() => {
     const set = new Set<string>()
     data.blockedSlots.forEach((b) => set.add(b.date))
+    openPlay.sessions.filter((s) => s.status === 'scheduled').forEach((s) => set.add(s.sessionDate))
     return set
-  }, [data.blockedSlots])
+  }, [data.blockedSlots, openPlay.sessions])
+
+  const dayOpenPlay = useMemo(
+    () =>
+      settings.openPlayBlockBookings
+        ? openPlay.sessions.filter((s) => s.status === 'scheduled' && s.sessionDate === selectedDate)
+        : [],
+    [openPlay.sessions, selectedDate, settings.openPlayBlockBookings],
+  )
 
   const daySchedule = useMemo(() => {
     const dayBookings = data.bookings.filter((b) => b.bookingDate === selectedDate && b.status !== 'cancelled')
@@ -54,6 +65,19 @@ export default function AdminCalendar() {
         return { hour: h, status: 'blocked' as SlotStatus, detail: blocked.reason || 'Blocked by admin' }
       }
 
+      const openPlaySession = dayOpenPlay.find((s) => {
+        const bStart = timeToHour(s.startTime) * 60
+        const bEnd = timeToHour(s.endTime) * 60
+        return slotStart < bEnd && bStart < slotEnd
+      })
+      if (openPlaySession) {
+        return {
+          hour: h,
+          status: 'blocked' as SlotStatus,
+          detail: `Open Play · ${openPlaySession.registeredCount}/${openPlaySession.playerLimit} players`,
+        }
+      }
+
       const booking = dayBookings.find((b) => {
         const bStart = timeToHour(b.startTime) * 60
         const bEnd = timeToHour(b.endTime) * 60
@@ -66,7 +90,7 @@ export default function AdminCalendar() {
 
       return { hour: h, status: 'available' as SlotStatus, detail: null }
     })
-  }, [selectedDate, data.bookings, data.blockedSlots, settings])
+  }, [selectedDate, data.bookings, data.blockedSlots, dayOpenPlay, settings])
 
   return (
     <div>

@@ -49,8 +49,12 @@ export function useBookingFlow() {
     if (!date) return
     let cancelled = false
     setLoadingAvailability(true)
-    Promise.all([store.getAvailabilityForDate(date), store.listBlockedSlots()])
-      .then(([rows, blockedSlots]) => {
+    Promise.all([
+      store.getAvailabilityForDate(date),
+      store.listBlockedSlots(),
+      settings.openPlayBlockBookings ? store.getOpenPlaySessionsForDate(date) : Promise.resolve([]),
+    ])
+      .then(([rows, blockedSlots, openPlaySessions]) => {
         if (cancelled) return
         const blockedForDate: BlockedSlotLike[] = blockedSlots
           .filter((b) => b.date === date)
@@ -60,13 +64,19 @@ export function useBookingFlow() {
             endTime: b.allDay ? settings.closingTime : b.endTime,
             allDay: b.allDay,
           }))
-        setAvailability({ bookings: rows, blocked: blockedForDate })
+        const openPlayBlocked: BlockedSlotLike[] = openPlaySessions.map((s) => ({
+          date: s.sessionDate,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          allDay: false,
+        }))
+        setAvailability({ bookings: rows, blocked: [...blockedForDate, ...openPlayBlocked] })
       })
       .finally(() => !cancelled && setLoadingAvailability(false))
     return () => {
       cancelled = true
     }
-  }, [date, settings.openingTime, settings.closingTime])
+  }, [date, settings.openingTime, settings.closingTime, settings.openPlayBlockBookings])
 
   const availableStartHours = useMemo(() => {
     if (!date) return []
@@ -123,9 +133,10 @@ export function useBookingFlow() {
     setSubmitError(null)
     try {
       // Re-check availability right before submit to avoid double-booking races.
-      const [freshRows, blockedSlots] = await Promise.all([
+      const [freshRows, blockedSlots, openPlaySessions] = await Promise.all([
         store.getAvailabilityForDate(date),
         store.listBlockedSlots(),
+        settings.openPlayBlockBookings ? store.getOpenPlaySessionsForDate(date) : Promise.resolve([]),
       ])
       const startMin = timeToMinutes(hourToTime(startHour))
       const endMin = timeToMinutes(endTime)
@@ -141,7 +152,8 @@ export function useBookingFlow() {
           const bStart = timeToMinutes(b.allDay ? settings.openingTime : b.startTime)
           const bEnd = timeToMinutes(b.allDay ? settings.closingTime : b.endTime)
           return startMin < bEnd && bStart < endMin
-        })
+        }) ||
+        openPlaySessions.some((s) => startMin < timeToMinutes(s.endTime) && timeToMinutes(s.startTime) < endMin)
 
       if (conflict) {
         setSubmitError('Sorry, this time slot was just booked by someone else. Please choose another time.')

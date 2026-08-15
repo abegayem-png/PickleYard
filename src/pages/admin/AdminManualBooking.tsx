@@ -34,20 +34,29 @@ export default function AdminManualBooking() {
   useEffect(() => {
     setStartHour(null)
     setDuration(null)
-    Promise.all([store.getAvailabilityForDate(date), store.listBlockedSlots()]).then(([r, b]) => {
+    Promise.all([
+      store.getAvailabilityForDate(date),
+      store.listBlockedSlots(),
+      settings.openPlayBlockBookings ? store.getOpenPlaySessionsForDate(date) : Promise.resolve([]),
+    ]).then(([r, b, openPlaySessions]) => {
       setRows(r)
-      setBlocked(
-        b
-          .filter((s) => s.date === date)
-          .map((s) => ({
-            date: s.date,
-            startTime: s.allDay ? settings.openingTime : s.startTime,
-            endTime: s.allDay ? settings.closingTime : s.endTime,
-            allDay: s.allDay,
-          })),
-      )
+      const blockedSlots: BlockedSlotLike[] = b
+        .filter((s) => s.date === date)
+        .map((s) => ({
+          date: s.date,
+          startTime: s.allDay ? settings.openingTime : s.startTime,
+          endTime: s.allDay ? settings.closingTime : s.endTime,
+          allDay: s.allDay,
+        }))
+      const openPlayBlocked: BlockedSlotLike[] = openPlaySessions.map((s) => ({
+        date: s.sessionDate,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        allDay: false,
+      }))
+      setBlocked([...blockedSlots, ...openPlayBlocked])
     })
-  }, [date, settings.openingTime, settings.closingTime])
+  }, [date, settings.openingTime, settings.closingTime, settings.openPlayBlockBookings])
 
   const availableStartHours = useMemo(
     () => getAvailableStartHours(date, settings, rows, blocked),

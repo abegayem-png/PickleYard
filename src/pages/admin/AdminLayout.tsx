@@ -7,6 +7,7 @@ const TABS = [
   { to: '/admin/calendar', label: 'Calendar' },
   { to: '/admin/blocked', label: 'Blocked Slots' },
   { to: '/admin/new-booking', label: 'New Booking' },
+  { to: '/admin/open-play', label: 'Open Play' },
   { to: '/admin/settings', label: 'Settings' },
 ]
 

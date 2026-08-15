@@ -6,6 +6,7 @@ import HowToBook from '../components/home/HowToBook'
 import WhyPlayWithUs from '../components/home/WhyPlayWithUs'
 import LocationSection from '../components/home/LocationSection'
 import ContactSection from '../components/home/ContactSection'
+import OpenPlaySection from '../components/home/OpenPlaySection'
 import BookingWidget from '../components/booking/BookingWidget'
 
 export default function Home() {
@@ -24,6 +25,7 @@ export default function Home() {
       </section>
 
       <RatesSection />
+      <OpenPlaySection />
       <HowToBook />
       <WhyPlayWithUs />
       <LocationSection />
