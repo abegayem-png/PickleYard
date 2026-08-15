@@ -7,11 +7,13 @@ import WhyPlayWithUs from '../components/home/WhyPlayWithUs'
 import LocationSection from '../components/home/LocationSection'
 import ContactSection from '../components/home/ContactSection'
 import OpenPlaySection from '../components/home/OpenPlaySection'
+import OpenPlayBanner from '../components/home/OpenPlayBanner'
 import BookingWidget from '../components/booking/BookingWidget'
 
 export default function Home() {
   return (
     <Layout>
+      <OpenPlayBanner />
       <Hero />
 
       <section id="book" className="scroll-mt-20 px-4 py-10 sm:px-6 sm:py-14">

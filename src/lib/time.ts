@@ -59,6 +59,13 @@ export function formatDateShort(iso: string): string {
   return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
+/** e.g. "Sunday, August 16, 2026" — full weekday, for promotional/banner copy. */
+export function formatDateFull(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  const date = new Date(y, m - 1, d)
+  return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+}
+
 /** Returns true if [aStart, aEnd) overlaps [bStart, bEnd), all in minutes-since-midnight. */
 export function rangesOverlap(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
   return aStart < bEnd && bStart < aEnd

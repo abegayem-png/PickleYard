@@ -17,7 +17,7 @@ export default function OpenPlaySection() {
     .sort((a, b) => (a.sessionDate === b.sessionDate ? a.startTime.localeCompare(b.startTime) : a.sessionDate.localeCompare(b.sessionDate)))
 
   return (
-    <section className="bg-court-900/50 px-4 py-14 sm:px-6 sm:py-20">
+    <section id="open-play" className="scroll-mt-20 bg-court-900/50 px-4 py-14 sm:px-6 sm:py-20">
       <div className="mx-auto max-w-3xl">
         <div className="text-center">
           <h2 className="font-display text-3xl font-extrabold text-cream sm:text-4xl">Open Play</h2>
