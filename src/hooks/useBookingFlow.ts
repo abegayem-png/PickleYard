@@ -4,7 +4,7 @@ import { store } from '../lib/store'
 import { calculatePrice, getAvailableDurations, getAvailableStartHours } from '../lib/pricing'
 import type { BookingLike, BlockedSlotLike } from '../lib/pricing'
 import { hourToTime, minutesToTime, timeToMinutes, todayISO } from '../lib/time'
-import type { Booking, BookingInput, PaymentMethod } from '../types'
+import type { Booking, BookingInput, PaymentMethod, PromoPreview } from '../types'
 
 export type BookingStep = 'date' | 'time' | 'duration' | 'info' | 'summary' | 'confirmation'
 
@@ -43,6 +43,11 @@ export function useBookingFlow() {
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [confirmedBooking, setConfirmedBooking] = useState<Booking | null>(null)
+
+  const [promoInput, setPromoInput] = useState('')
+  const [appliedPromo, setAppliedPromo] = useState<PromoPreview | null>(null)
+  const [promoChecking, setPromoChecking] = useState(false)
+  const [promoError, setPromoError] = useState<string | null>(null)
 
   // Fetch fresh availability whenever the selected date changes.
   useEffect(() => {
@@ -127,6 +132,32 @@ export function useBookingFlow() {
     setStep('summary')
   }, [])
 
+  const applyPromoCode = useCallback(async () => {
+    if (!promoInput.trim() || !date || startHour === null || !duration) return
+    setPromoChecking(true)
+    setPromoError(null)
+    try {
+      const preview = await store.previewPromoCode(promoInput, date, startHour, duration, customer.mobileNumber)
+      if (preview.valid) {
+        setAppliedPromo(preview)
+      } else {
+        setAppliedPromo(null)
+        setPromoError(preview.reason ?? 'Invalid or expired promo code.')
+      }
+    } catch {
+      setAppliedPromo(null)
+      setPromoError('Invalid or expired promo code.')
+    } finally {
+      setPromoChecking(false)
+    }
+  }, [promoInput, date, startHour, duration, customer.mobileNumber])
+
+  const removePromoCode = useCallback(() => {
+    setAppliedPromo(null)
+    setPromoError(null)
+    setPromoInput('')
+  }, [])
+
   const submitBooking = useCallback(async () => {
     if (!date || startHour === null || !duration || !priceResult?.valid || !endTime) return
     setSubmitting(true)
@@ -171,10 +202,11 @@ export function useBookingFlow() {
         startTime: hourToTime(startHour),
         endTime,
         duration,
-        rateBreakdown: priceResult.breakdown,
-        totalAmount: priceResult.total,
+        rateBreakdown: appliedPromo?.valid ? appliedPromo.rateBreakdown : priceResult.breakdown,
+        totalAmount: appliedPromo?.valid ? appliedPromo.promoTotal : priceResult.total,
         notes: customer.notes.trim() || undefined,
         paymentMethod: customer.paymentMethod,
+        promoCode: appliedPromo?.valid ? appliedPromo.code : undefined,
       }
       const booking = await store.createBooking(input)
       setConfirmedBooking(booking)
@@ -184,7 +216,7 @@ export function useBookingFlow() {
     } finally {
       setSubmitting(false)
     }
-  }, [date, startHour, duration, priceResult, endTime, customer, settings])
+  }, [date, startHour, duration, priceResult, endTime, customer, settings, appliedPromo])
 
   const reset = useCallback(() => {
     setStep('date')
@@ -201,6 +233,9 @@ export function useBookingFlow() {
     })
     setConfirmedBooking(null)
     setSubmitError(null)
+    setPromoInput('')
+    setAppliedPromo(null)
+    setPromoError(null)
   }, [])
 
   return {
@@ -227,5 +262,12 @@ export function useBookingFlow() {
     submitCustomerInfo,
     submitBooking,
     reset,
+    promoInput,
+    setPromoInput,
+    appliedPromo,
+    promoChecking,
+    promoError,
+    applyPromoCode,
+    removePromoCode,
   }
 }

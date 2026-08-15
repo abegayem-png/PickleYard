@@ -4,12 +4,19 @@ import { formatTime12h, hourToTime, rangesOverlap, timeToHour } from './time'
 export type BookingLike = Pick<Booking, 'bookingDate' | 'startTime' | 'endTime' | 'status'>
 export type BlockedSlotLike = Pick<BlockedSlot, 'date' | 'startTime' | 'endTime' | 'allDay'>
 
+/** Daytime/nighttime rates to use instead of the settings' normal rates — e.g. a promo code.
+ *  Gap-period hours are never discounted by a promo; they always use settings.gapRate. */
+export interface PromoRates {
+  daytimeRate: number
+  nighttimeRate: number
+}
+
 /**
  * Determines the rate + period for a single 1-hour segment starting at `hour` (24h int).
  * Returns null if the hour falls in the gap between daytime and nighttime and the
  * admin has not enabled gap bookings.
  */
-export function getHourRate(hour: number, settings: Settings): HourRate | null {
+export function getHourRate(hour: number, settings: Settings, promoRates?: PromoRates): HourRate | null {
   const dayStart = timeToHour(settings.daytimeStart)
   const dayEnd = timeToHour(settings.daytimeEnd)
   const nightStart = timeToHour(settings.nighttimeStart)
@@ -18,12 +25,13 @@ export function getHourRate(hour: number, settings: Settings): HourRate | null {
   const label = `${formatTime12h(hourToTime(hour))} - ${formatTime12h(hourToTime(hour + 1))}`
 
   if (hour >= dayStart && hour < dayEnd) {
-    return { hour, label, rate: settings.daytimeRate, period: 'daytime' }
+    return { hour, label, rate: promoRates?.daytimeRate ?? settings.daytimeRate, period: 'daytime' }
   }
   if (hour >= nightStart && hour < nightEnd) {
-    return { hour, label, rate: settings.nighttimeRate, period: 'nighttime' }
+    return { hour, label, rate: promoRates?.nighttimeRate ?? settings.nighttimeRate, period: 'nighttime' }
   }
-  // Gap period (e.g. 5 PM - 6 PM) — only bookable if admin enabled it.
+  // Gap period (e.g. 5 PM - 6 PM) — only bookable if admin enabled it. Promo rates never
+  // apply here; gap hours always bill at the normal gap rate.
   if (settings.gapEnabled) {
     return { hour, label, rate: settings.gapRate, period: 'gap' }
   }
@@ -38,10 +46,10 @@ export interface PriceResult {
 }
 
 /** Calculates price for a booking spanning [startHour, startHour + duration). */
-export function calculatePrice(startHour: number, duration: number, settings: Settings): PriceResult {
+export function calculatePrice(startHour: number, duration: number, settings: Settings, promoRates?: PromoRates): PriceResult {
   const breakdown: HourRate[] = []
   for (let h = startHour; h < startHour + duration; h++) {
-    const hourRate = getHourRate(h, settings)
+    const hourRate = getHourRate(h, settings, promoRates)
     if (!hourRate) {
       return {
         valid: false,

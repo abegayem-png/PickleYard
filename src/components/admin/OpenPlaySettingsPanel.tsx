@@ -1,15 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useSettings } from '../../context/SettingsContext'
 import { useOpenPlaySessions } from '../../hooks/useOpenPlaySessions'
-import { WEEKDAY_LABELS } from '../../lib/openPlay'
+import { WEEKDAY_LABELS, DISPLAY_WEEKDAYS } from '../../lib/openPlay'
 import { formatDateLong, formatTime12h, todayISO } from '../../lib/time'
 import type { OpenPlayScheduleType, Settings } from '../../types'
 import Button from '../ui/Button'
 import Card from '../ui/Card'
 import { DateField, NumberField, TimeField } from './SettingsFields'
-
-// Displayed Monday-first per the admin's request, stored as JS weekday indices (0=Sun..6=Sat).
-const DISPLAY_WEEKDAYS = [1, 2, 3, 4, 5, 6, 0]
 
 type OpenPlayFormFields = Pick<
   Settings,

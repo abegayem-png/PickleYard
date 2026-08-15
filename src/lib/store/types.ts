@@ -10,6 +10,10 @@ import type {
   OpenPlaySessionWithCount,
   OpenPlayRegistration,
   OpenPlayRegistrationInput,
+  PromoCode,
+  PromoCodeInput,
+  PromoPreview,
+  ActivePromoBanner,
 } from '../../types'
 
 /** Lightweight shape used only for availability/pricing checks — no customer PII. */
@@ -56,4 +60,22 @@ export interface DataStore {
   listOpenPlayRegistrations(sessionId: string): Promise<OpenPlayRegistration[]>
   addOpenPlayRegistration(input: OpenPlayRegistrationInput): Promise<OpenPlayRegistration>
   removeOpenPlayRegistration(id: string): Promise<void>
+
+  /** Admin: every promo code, any status. */
+  listPromoCodes(): Promise<PromoCode[]>
+  createPromoCode(input: PromoCodeInput): Promise<PromoCode>
+  updatePromoCode(id: string, patch: Partial<PromoCodeInput>): Promise<PromoCode>
+  deletePromoCode(id: string): Promise<void>
+
+  /** Trusted validation + pricing preview — always authoritative (DB/RPC in production). */
+  previewPromoCode(
+    code: string,
+    bookingDate: string,
+    startHour: number,
+    duration: number,
+    mobileNumber: string,
+  ): Promise<PromoPreview>
+
+  /** The one promo code (if any) currently eligible to show its public banner. */
+  getActivePromoBanner(): Promise<ActivePromoBanner | null>
 }

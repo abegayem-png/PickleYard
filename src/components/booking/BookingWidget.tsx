@@ -62,6 +62,13 @@ export default function BookingWidget() {
             submitError={flow.submitError}
             onConfirm={flow.submitBooking}
             onBack={flow.goBack}
+            promoInput={flow.promoInput}
+            setPromoInput={flow.setPromoInput}
+            appliedPromo={flow.appliedPromo}
+            promoChecking={flow.promoChecking}
+            promoError={flow.promoError}
+            onApplyPromo={flow.applyPromoCode}
+            onRemovePromo={flow.removePromoCode}
           />
         )}
 

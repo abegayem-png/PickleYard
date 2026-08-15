@@ -3,6 +3,8 @@ import { dateToISO, todayISO } from './time'
 
 export const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 export const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+/** Monday-first display order, mapped to JS weekday indices (0=Sun..6=Sat). */
+export const DISPLAY_WEEKDAYS = [1, 2, 3, 4, 5, 6, 0]
 
 /** How far ahead to materialize an open-ended ("no end date") recurring schedule. */
 const RECURRING_HORIZON_DAYS = 120

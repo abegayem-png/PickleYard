@@ -6,9 +6,14 @@ import type {
   Settings,
   OpenPlaySession,
   OpenPlayRegistration,
+  PromoCode,
+  PromoCodeInput,
+  PromoPreview,
+  ActivePromoBanner,
 } from '../../types'
 import { DEFAULT_SETTINGS } from '../../types'
 import { supabase } from '../supabaseClient'
+import { GENERIC_INVALID_MESSAGE } from '../promo'
 import type { AvailabilityRow, DataStore } from './types'
 
 function sb() {
@@ -31,7 +36,10 @@ function bookingFromRow(row: Record<string, unknown>): Booking {
     endTime: (row.end_time as string).slice(0, 5),
     duration: row.duration as number,
     rateBreakdown: (row.rate_breakdown as Booking['rateBreakdown']) ?? [],
+    normalTotal: Number(row.normal_total ?? row.total_amount),
     totalAmount: Number(row.total_amount),
+    promoCode: (row.promo_code as string) ?? null,
+    discountAmount: Number(row.discount_amount ?? 0),
     status: row.status as BookingStatus,
     paymentStatus: row.payment_status as PaymentStatus,
     paymentMethod: row.payment_method as Booking['paymentMethod'],
@@ -158,6 +166,43 @@ function openPlayRegistrationFromRow(row: Record<string, unknown>): OpenPlayRegi
   }
 }
 
+function promoCodeFromRow(row: Record<string, unknown>): PromoCode {
+  return {
+    id: row.id as string,
+    code: row.code as string,
+    active: Boolean(row.active),
+    daytimeRate: Number(row.daytime_rate),
+    nighttimeRate: Number(row.nighttime_rate),
+    validFrom: (row.valid_from as string) ?? '',
+    validUntil: (row.valid_until as string) ?? '',
+    validDays: (row.valid_days as number[]) ?? [],
+    minBookingHours: row.min_booking_hours === null || row.min_booking_hours === undefined ? null : Number(row.min_booking_hours),
+    maxTotalUses: row.max_total_uses === null || row.max_total_uses === undefined ? null : Number(row.max_total_uses),
+    maxUsesPerCustomer:
+      row.max_uses_per_customer === null || row.max_uses_per_customer === undefined ? null : Number(row.max_uses_per_customer),
+    showBanner: Boolean(row.show_banner),
+    bannerMessage: (row.banner_message as string) ?? '',
+    createdAt: row.created_at as string,
+  }
+}
+
+function promoCodeToRow(input: Partial<PromoCodeInput>): Record<string, unknown> {
+  const row: Record<string, unknown> = {}
+  if (input.code !== undefined) row.code = input.code.trim().toUpperCase()
+  if (input.active !== undefined) row.active = input.active
+  if (input.daytimeRate !== undefined) row.daytime_rate = input.daytimeRate
+  if (input.nighttimeRate !== undefined) row.nighttime_rate = input.nighttimeRate
+  if (input.validFrom !== undefined) row.valid_from = input.validFrom || null
+  if (input.validUntil !== undefined) row.valid_until = input.validUntil || null
+  if (input.validDays !== undefined) row.valid_days = input.validDays
+  if (input.minBookingHours !== undefined) row.min_booking_hours = input.minBookingHours
+  if (input.maxTotalUses !== undefined) row.max_total_uses = input.maxTotalUses
+  if (input.maxUsesPerCustomer !== undefined) row.max_uses_per_customer = input.maxUsesPerCustomer
+  if (input.showBanner !== undefined) row.show_banner = input.showBanner
+  if (input.bannerMessage !== undefined) row.banner_message = input.bannerMessage
+  return row
+}
+
 export const supabaseStore: DataStore = {
   async getSettings() {
     const { data, error } = await sb().from('settings').select('*').eq('id', 1).maybeSingle()
@@ -244,6 +289,10 @@ export const supabaseStore: DataStore = {
   },
 
   async createBooking(input) {
+    // rate_breakdown/total_amount/end_time are sent for completeness, but the
+    // `set_booking_pricing` trigger recomputes and overwrites all of them (plus
+    // normal_total/discount_amount, and re-validates promo_code) server-side —
+    // this insert payload is never trusted as the source of truth for pricing.
     const row = {
       customer_name: input.customerName,
       mobile_number: input.mobileNumber,
@@ -257,6 +306,7 @@ export const supabaseStore: DataStore = {
       total_amount: input.totalAmount,
       notes: input.notes ?? null,
       payment_method: input.paymentMethod,
+      promo_code: input.promoCode?.trim() || null,
     }
     const { data, error } = await sb().from('bookings').insert(row).select('*').single()
     if (error) throw error
@@ -421,5 +471,76 @@ export const supabaseStore: DataStore = {
   async removeOpenPlayRegistration(id) {
     const { error } = await sb().from('open_play_registrations').delete().eq('id', id)
     if (error) throw error
+  },
+
+  async listPromoCodes() {
+    const { data, error } = await sb().from('promo_codes').select('*').order('code', { ascending: true })
+    if (error) throw error
+    return (data ?? []).map(promoCodeFromRow)
+  },
+
+  async createPromoCode(input) {
+    const { data, error } = await sb().from('promo_codes').insert(promoCodeToRow(input)).select('*').single()
+    if (error) throw error
+    return promoCodeFromRow(data)
+  },
+
+  async updatePromoCode(id, patch) {
+    const { data, error } = await sb().from('promo_codes').update(promoCodeToRow(patch)).eq('id', id).select('*').single()
+    if (error) throw error
+    return promoCodeFromRow(data)
+  },
+
+  async deletePromoCode(id) {
+    const { error } = await sb().from('promo_codes').delete().eq('id', id)
+    if (error) throw error
+  },
+
+  async previewPromoCode(code, bookingDate, startHour, duration, mobileNumber): Promise<PromoPreview> {
+    const { data, error } = await sb().rpc('preview_promo_code', {
+      p_code: code.trim(),
+      p_booking_date: bookingDate,
+      p_start_hour: startHour,
+      p_duration: duration,
+      p_mobile_number: mobileNumber,
+    })
+    if (error) throw error
+    const row = Array.isArray(data) ? data[0] : data
+    if (!row || !row.valid) {
+      return {
+        valid: false,
+        reason: GENERIC_INVALID_MESSAGE,
+        code: code.trim().toUpperCase(),
+        daytimeRate: 0,
+        nighttimeRate: 0,
+        rateBreakdown: [],
+        normalTotal: 0,
+        promoTotal: 0,
+        discountAmount: 0,
+      }
+    }
+    return {
+      valid: true,
+      reason: null,
+      code: row.promo_code as string,
+      daytimeRate: Number(row.daytime_rate),
+      nighttimeRate: Number(row.nighttime_rate),
+      rateBreakdown: (row.rate_breakdown as Booking['rateBreakdown']) ?? [],
+      normalTotal: Number(row.normal_total),
+      promoTotal: Number(row.promo_total),
+      discountAmount: Number(row.discount_amount),
+    }
+  },
+
+  async getActivePromoBanner(): Promise<ActivePromoBanner | null> {
+    const { data, error } = await sb().from('promo_banner').select('*').limit(1).maybeSingle()
+    if (error) throw error
+    if (!data) return null
+    return {
+      code: data.code as string,
+      bannerMessage: (data.banner_message as string) ?? '',
+      daytimeRate: Number(data.daytime_rate),
+      nighttimeRate: Number(data.nighttime_rate),
+    }
   },
 }

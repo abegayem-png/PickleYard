@@ -57,6 +57,18 @@ export default function BookingRow({ booking, onApprove, onCancel, onMarkPaid, o
             <Info label="Duration" value={`${booking.duration}h`} />
             <Info label="Booked On" value={new Date(booking.createdAt).toLocaleString()} />
           </div>
+
+          <div className="mt-3 rounded-lg bg-white/5 p-3 text-sm">
+            <Info label="Promo Code" value={booking.promoCode ?? 'None'} />
+            {booking.promoCode && (
+              <div className="mt-2 grid grid-cols-3 gap-3">
+                <Info label="Normal Total" value={`₱${booking.normalTotal}`} />
+                <Info label="Discount" value={`₱${booking.discountAmount}`} />
+                <Info label="Final Total" value={`₱${booking.totalAmount}`} />
+              </div>
+            )}
+          </div>
+
           {booking.notes && (
             <p className="mt-3 rounded-lg bg-white/5 p-3 text-sm text-cream-dim">
               <span className="font-semibold text-cream">Notes: </span>

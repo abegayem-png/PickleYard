@@ -18,7 +18,12 @@ create table if not exists bookings (
   end_time time not null,
   duration integer not null,
   rate_breakdown jsonb not null default '[]',
+  -- Pre-discount total. Kept alongside total_amount so "Normal Total / Discount /
+  -- Final Total" can be shown verbatim in Admin > Bookings.
+  normal_total numeric(10, 2) not null default 0,
   total_amount numeric(10, 2) not null,
+  promo_code text,
+  discount_amount numeric(10, 2) not null default 0,
   status text not null default 'pending' check (status in ('pending', 'confirmed', 'cancelled')),
   payment_status text not null default 'unpaid' check (payment_status in ('unpaid', 'paid')),
   payment_method text not null default 'cash' check (payment_method in ('gcash', 'cash')),
@@ -28,6 +33,16 @@ create table if not exists bookings (
 
 create index if not exists bookings_date_idx on bookings (booking_date);
 create index if not exists bookings_reference_idx on bookings (booking_reference);
+create index if not exists bookings_promo_code_idx on bookings (promo_code);
+
+-- Defensive guards in case `bookings` already existed from an earlier,
+-- partial version of this script — safe no-ops if the columns are present.
+alter table bookings add column if not exists normal_total numeric(10, 2);
+alter table bookings add column if not exists promo_code text;
+alter table bookings add column if not exists discount_amount numeric(10, 2) not null default 0;
+update bookings set normal_total = total_amount where normal_total is null;
+alter table bookings alter column normal_total set not null;
+alter table bookings alter column normal_total set default 0;
 
 -- Auto-generate a PKL-XXXXXX reference if the client doesn't supply one.
 create or replace function generate_booking_reference() returns text as $$
@@ -55,6 +70,270 @@ drop trigger if exists trg_set_booking_reference on bookings;
 create trigger trg_set_booking_reference
   before insert on bookings
   for each row execute function set_booking_reference();
+
+-- ---------------------------------------------------------------------------
+-- promo_codes
+-- ---------------------------------------------------------------------------
+create table if not exists promo_codes (
+  id uuid primary key default gen_random_uuid(),
+  code text not null unique,
+  active boolean not null default true,
+  daytime_rate numeric(10, 2) not null,
+  nighttime_rate numeric(10, 2) not null,
+  valid_from date not null default current_date,
+  valid_until date,
+  -- [] = every day of the week; otherwise a JSON array of 0 (Sun) .. 6 (Sat).
+  valid_days jsonb not null default '[]',
+  min_booking_hours integer,
+  max_total_uses integer,
+  max_uses_per_customer integer,
+  show_banner boolean not null default false,
+  banner_message text not null default '',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists promo_codes_code_idx on promo_codes (code);
+
+-- Default/first promo code — safe to re-run, only inserted if it doesn't exist yet.
+insert into promo_codes (code, active, daytime_rate, nighttime_rate, valid_from, show_banner, banner_message)
+values (
+  'PLAYMORE', true, 133, 155, current_date, true,
+  'Use code PLAYMORE and play for only ₱133/hour daytime or ₱155/hour at night!'
+)
+on conflict (code) do nothing;
+
+-- ---------------------------------------------------------------------------
+-- Trusted, server-side pricing + promo validation.
+--
+-- IMPORTANT: this is the only place booking prices are computed. The app's
+-- insert payload (rate_breakdown/total_amount/promo_code, etc.) is never
+-- trusted — the trigger below always recalculates from settings/promo_codes
+-- and overwrites whatever the client sent, so a customer editing the browser
+-- request cannot manufacture their own discount.
+-- ---------------------------------------------------------------------------
+
+-- "6:00 PM" style label for hour `h` (0-23, wraps via modulo like the app's
+-- own lib/time.ts) — deliberately hand-rolled instead of to_char() so the
+-- output format is exact and doesn't depend on to_char's padding rules.
+create or replace function pkl_hour_label(h integer) returns text
+language sql immutable as $$
+  select (case when (h % 24) % 12 = 0 then 12 else (h % 24) % 12 end)::text
+    || ':00 ' || (case when (h % 24) >= 12 then 'PM' else 'AM' end);
+$$;
+
+create or replace function compute_booking_pricing(
+  p_booking_date date,
+  p_start_time time,
+  p_duration integer,
+  p_promo_code text default null,
+  p_mobile_number text default null
+)
+returns table (
+  valid boolean,
+  reason text,
+  promo_code_out text,
+  daytime_rate numeric,
+  nighttime_rate numeric,
+  rate_breakdown jsonb,
+  normal_total numeric,
+  promo_total numeric,
+  discount_amount numeric
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  s record;
+  promo record;
+  h integer;
+  start_hour integer;
+  day_start integer;
+  day_end integer;
+  night_start integer;
+  night_end integer;
+  weekday integer;
+  hour_rate numeric;
+  hour_period text;
+  label text;
+  normal_breakdown jsonb := '[]'::jsonb;
+  promo_breakdown jsonb := '[]'::jsonb;
+  normal_sum numeric := 0;
+  promo_sum numeric := 0;
+  code_norm text;
+  total_uses integer;
+  customer_uses integer;
+  promo_applies boolean := false;
+begin
+  if p_duration is null or p_duration < 1 or p_duration > 4 then
+    return query select false, 'Invalid booking duration.', null::text, 0::numeric, 0::numeric, '[]'::jsonb, 0::numeric, 0::numeric, 0::numeric;
+    return;
+  end if;
+
+  select * into s from settings where id = 1;
+  if not found then
+    return query select false, 'Settings not configured.', null::text, 0::numeric, 0::numeric, '[]'::jsonb, 0::numeric, 0::numeric, 0::numeric;
+    return;
+  end if;
+
+  start_hour := extract(hour from p_start_time)::int;
+  day_start := extract(hour from s.daytime_start)::int;
+  day_end := extract(hour from s.daytime_end)::int;
+  night_start := extract(hour from s.nighttime_start)::int;
+  night_end := extract(hour from s.nighttime_end)::int;
+  weekday := extract(dow from p_booking_date)::int;
+
+  if p_promo_code is not null and length(trim(p_promo_code)) > 0 then
+    code_norm := upper(trim(p_promo_code));
+    select * into promo from promo_codes where code = code_norm;
+
+    if not found then
+      return query select false, 'Invalid or expired promo code.', code_norm, 0::numeric, 0::numeric, '[]'::jsonb, 0::numeric, 0::numeric, 0::numeric;
+      return;
+    end if;
+
+    select count(*) into total_uses from bookings where promo_code = code_norm and status <> 'cancelled';
+    select count(*) into customer_uses from bookings
+      where promo_code = code_norm and status <> 'cancelled'
+        and replace(replace(mobile_number, ' ', ''), '-', '') = replace(replace(coalesce(p_mobile_number, ''), ' ', ''), '-', '');
+
+    if not promo.active
+      or promo.valid_from > p_booking_date
+      or (promo.valid_until is not null and promo.valid_until < p_booking_date)
+      or (jsonb_array_length(promo.valid_days) > 0 and not (promo.valid_days @> to_jsonb(weekday)))
+      or (promo.min_booking_hours is not null and p_duration < promo.min_booking_hours)
+      or (promo.max_total_uses is not null and total_uses >= promo.max_total_uses)
+      or (promo.max_uses_per_customer is not null and customer_uses >= promo.max_uses_per_customer)
+    then
+      return query select false, 'Invalid or expired promo code.', code_norm, 0::numeric, 0::numeric, '[]'::jsonb, 0::numeric, 0::numeric, 0::numeric;
+      return;
+    end if;
+
+    promo_applies := true;
+  end if;
+
+  for h in start_hour .. (start_hour + p_duration - 1) loop
+    label := pkl_hour_label(h) || ' - ' || pkl_hour_label(h + 1);
+
+    if h >= day_start and h < day_end then
+      hour_period := 'daytime';
+      hour_rate := s.daytime_rate;
+    elsif h >= night_start and h < night_end then
+      hour_period := 'nighttime';
+      hour_rate := s.nighttime_rate;
+    elsif s.gap_enabled then
+      hour_period := 'gap';
+      hour_rate := s.gap_rate;
+    else
+      return query select false, 'That time is not available for booking.', code_norm, 0::numeric, 0::numeric, '[]'::jsonb, 0::numeric, 0::numeric, 0::numeric;
+      return;
+    end if;
+
+    normal_breakdown := normal_breakdown || jsonb_build_object('hour', h % 24, 'label', label, 'rate', hour_rate, 'period', hour_period);
+    normal_sum := normal_sum + hour_rate;
+
+    if promo_applies and hour_period = 'daytime' then
+      promo_breakdown := promo_breakdown || jsonb_build_object('hour', h % 24, 'label', label, 'rate', promo.daytime_rate, 'period', hour_period);
+      promo_sum := promo_sum + promo.daytime_rate;
+    elsif promo_applies and hour_period = 'nighttime' then
+      promo_breakdown := promo_breakdown || jsonb_build_object('hour', h % 24, 'label', label, 'rate', promo.nighttime_rate, 'period', hour_period);
+      promo_sum := promo_sum + promo.nighttime_rate;
+    else
+      promo_breakdown := promo_breakdown || jsonb_build_object('hour', h % 24, 'label', label, 'rate', hour_rate, 'period', hour_period);
+      promo_sum := promo_sum + hour_rate;
+    end if;
+  end loop;
+
+  if promo_applies then
+    return query select true, null::text, code_norm, promo.daytime_rate, promo.nighttime_rate, promo_breakdown, normal_sum, promo_sum, (normal_sum - promo_sum);
+  else
+    return query select true, null::text, null::text, 0::numeric, 0::numeric, normal_breakdown, normal_sum, normal_sum, 0::numeric;
+  end if;
+end;
+$$;
+
+-- Internal helper only — not meant to be called directly by anon/authenticated.
+-- The trigger and preview_promo_code() below can still call it internally
+-- because both are themselves SECURITY DEFINER (they execute as the owner).
+revoke all on function compute_booking_pricing(date, time, integer, text, text) from public;
+
+create or replace function set_booking_pricing() returns trigger as $$
+declare
+  result record;
+begin
+  new.end_time := (new.start_time + (new.duration::text || ' hours')::interval)::time;
+
+  select * into result
+    from compute_booking_pricing(new.booking_date, new.start_time, new.duration, new.promo_code, new.mobile_number);
+
+  if not result.valid then
+    if new.promo_code is not null and length(trim(new.promo_code)) > 0 then
+      raise exception 'Promo code is no longer valid. Please remove it and try again.';
+    else
+      raise exception '%', coalesce(result.reason, 'Selected time is not available for booking.');
+    end if;
+  end if;
+
+  new.rate_breakdown := result.rate_breakdown;
+  new.normal_total := result.normal_total;
+  new.total_amount := result.promo_total;
+  new.discount_amount := result.discount_amount;
+  new.promo_code := result.promo_code_out;
+
+  return new;
+end;
+$$ language plpgsql security definer set search_path = public;
+
+drop trigger if exists trg_set_booking_pricing on bookings;
+create trigger trg_set_booking_pricing
+  before insert on bookings
+  for each row execute function set_booking_pricing();
+
+-- Anon-callable, read-only preview used by the "Apply" button on the booking
+-- page — runs the exact same trusted logic as the insert trigger above, so
+-- what the customer previews is what they'll actually be charged.
+create or replace function preview_promo_code(
+  p_code text,
+  p_booking_date date,
+  p_start_hour integer,
+  p_duration integer,
+  p_mobile_number text default ''
+)
+returns table (
+  valid boolean,
+  promo_code text,
+  daytime_rate numeric,
+  nighttime_rate numeric,
+  rate_breakdown jsonb,
+  normal_total numeric,
+  promo_total numeric,
+  discount_amount numeric
+)
+language sql
+security definer
+set search_path = public
+as $$
+  select valid, promo_code_out, daytime_rate, nighttime_rate, rate_breakdown, normal_total, promo_total, discount_amount
+  from compute_booking_pricing(p_booking_date, (p_start_hour || ':00')::time, p_duration, p_code, p_mobile_number);
+$$;
+
+revoke all on function preview_promo_code(text, date, integer, integer, text) from public;
+grant execute on function preview_promo_code(text, date, integer, integer, text) to anon, authenticated;
+
+-- Narrow public view: only the one promo currently allowed to show its
+-- banner, and only its banner-safe fields (never max uses, per-customer
+-- limits, etc.) — this is what the homepage promo banner reads from.
+create or replace view promo_banner as
+  select code, banner_message, daytime_rate, nighttime_rate
+  from promo_codes
+  where active = true
+    and show_banner = true
+    and valid_from <= current_date
+    and (valid_until is null or valid_until >= current_date)
+  order by valid_from desc
+  limit 1;
+
+grant select on promo_banner to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- blocked_slots
@@ -212,6 +491,22 @@ grant execute on function get_booking_by_reference(text, text) to anon, authenti
 alter table bookings enable row level security;
 alter table blocked_slots enable row level security;
 alter table settings enable row level security;
+alter table promo_codes enable row level security;
+
+-- promo_codes: never publicly readable — customers only ever see promo
+-- effects through the preview_promo_code RPC and the narrow promo_banner
+-- view above, never the raw table (max uses, per-customer limits, etc. stay
+-- internal). Only authenticated admins can read or manage the full table.
+drop policy if exists "admins can view promo codes" on promo_codes;
+create policy "admins can view promo codes" on promo_codes
+  for select to authenticated
+  using (true);
+
+drop policy if exists "admins can manage promo codes" on promo_codes;
+create policy "admins can manage promo codes" on promo_codes
+  for all to authenticated
+  using (true)
+  with check (true);
 
 -- bookings: customers can create bookings, but cannot read/update/delete
 -- them directly (they use public_availability + the RPC above instead).

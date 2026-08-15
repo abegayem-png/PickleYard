@@ -15,7 +15,13 @@ export interface Booking {
   endTime: string // HH:MM (24h)
   duration: number // hours
   rateBreakdown: HourRate[]
+  /** Pre-discount total. Equal to totalAmount when no promo was applied. */
+  normalTotal: number
+  /** Final amount charged — always server/DB-computed, never trusted from the client. */
   totalAmount: number
+  /** Uppercased promo code that was actually applied, or null. */
+  promoCode: string | null
+  discountAmount: number
   status: BookingStatus
   paymentStatus: PaymentStatus
   paymentMethod: PaymentMethod
@@ -32,10 +38,14 @@ export interface BookingInput {
   startTime: string
   endTime: string
   duration: number
+  /** Client-side preview only — the server/store always recomputes the authoritative
+   *  rate breakdown, totals, and promo eligibility rather than trusting these. */
   rateBreakdown: HourRate[]
   totalAmount: number
   notes?: string
   paymentMethod: PaymentMethod
+  /** Promo code the customer applied, if any — re-validated server-side before it counts. */
+  promoCode?: string
 }
 
 export interface HourRate {
@@ -86,6 +96,62 @@ export interface OpenPlayRegistrationInput {
   sessionId: string
   playerName: string
   mobileNumber: string
+}
+
+export interface PromoCode {
+  id: string
+  code: string
+  active: boolean
+  daytimeRate: number
+  nighttimeRate: number
+  validFrom: string // YYYY-MM-DD
+  validUntil: string // YYYY-MM-DD, '' = no end date
+  validDays: number[] // 0 = Sunday ... 6 = Saturday, [] = every day
+  minBookingHours: number | null
+  maxTotalUses: number | null
+  maxUsesPerCustomer: number | null
+  showBanner: boolean
+  bannerMessage: string
+  createdAt: string
+}
+
+export interface PromoCodeInput {
+  code: string
+  active: boolean
+  daytimeRate: number
+  nighttimeRate: number
+  validFrom: string
+  validUntil: string
+  validDays: number[]
+  minBookingHours: number | null
+  maxTotalUses: number | null
+  maxUsesPerCustomer: number | null
+  showBanner: boolean
+  bannerMessage: string
+}
+
+/** Result of checking a promo code against a specific date/duration/customer — always
+ *  computed by trusted logic (the Supabase RPC in production, or the local store in
+ *  demo mode), never trusted from raw client input. */
+export interface PromoPreview {
+  valid: boolean
+  /** Always the generic customer-facing message when invalid — never leaks *why*. */
+  reason: string | null
+  code: string
+  daytimeRate: number
+  nighttimeRate: number
+  rateBreakdown: HourRate[]
+  normalTotal: number
+  promoTotal: number
+  discountAmount: number
+}
+
+/** Narrow, public-safe view of whichever promo currently has its banner enabled. */
+export interface ActivePromoBanner {
+  code: string
+  bannerMessage: string
+  daytimeRate: number
+  nighttimeRate: number
 }
 
 export interface BlockedSlot {

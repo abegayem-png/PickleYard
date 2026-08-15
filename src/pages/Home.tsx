@@ -8,6 +8,7 @@ import LocationSection from '../components/home/LocationSection'
 import ContactSection from '../components/home/ContactSection'
 import OpenPlaySection from '../components/home/OpenPlaySection'
 import OpenPlayBanner from '../components/home/OpenPlayBanner'
+import PromoBanner from '../components/home/PromoBanner'
 import BookingWidget from '../components/booking/BookingWidget'
 
 export default function Home() {
@@ -22,6 +23,7 @@ export default function Home() {
             <h2 className="font-display text-3xl font-extrabold text-cream sm:text-4xl">Book Your Court</h2>
             <p className="mt-2 text-cream-dim">Choose your date, time, and playing duration.</p>
           </div>
+          <PromoBanner />
           <BookingWidget />
         </div>
       </section>

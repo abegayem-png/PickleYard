@@ -12,6 +12,7 @@ import AdminBlockedSlots from './pages/admin/AdminBlockedSlots'
 import AdminManualBooking from './pages/admin/AdminManualBooking'
 import AdminSettings from './pages/admin/AdminSettings'
 import AdminOpenPlay from './pages/admin/AdminOpenPlay'
+import AdminPromoCodes from './pages/admin/AdminPromoCodes'
 
 export default function App() {
   return (
@@ -30,6 +31,7 @@ export default function App() {
               <Route path="blocked" element={<AdminBlockedSlots />} />
               <Route path="new-booking" element={<AdminManualBooking />} />
               <Route path="open-play" element={<AdminOpenPlay />} />
+              <Route path="promo-codes" element={<AdminPromoCodes />} />
               <Route path="settings" element={<AdminSettings />} />
             </Route>
           </Routes>
