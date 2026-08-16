@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { usePromoCodes } from '../../hooks/usePromoCodes'
 import { WEEKDAY_LABELS, DISPLAY_WEEKDAYS } from '../../lib/openPlay'
 import { formatDateLong } from '../../lib/time'
+import { getErrorMessage } from '../../lib/errors'
 import type { PromoCode, PromoCodeInput } from '../../types'
 import Badge from '../../components/ui/Badge'
 import Button from '../../components/ui/Button'
@@ -199,7 +200,7 @@ function PromoCodeForm({
     try {
       await onSubmit({ ...form, code: form.code.trim().toUpperCase() })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save promo code.')
+      setError(getErrorMessage(err, 'Failed to save promo code.'))
     } finally {
       setBusy(false)
     }

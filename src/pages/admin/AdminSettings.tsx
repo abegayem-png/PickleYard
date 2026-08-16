@@ -4,6 +4,7 @@ import { isSupabaseConfigured } from '../../lib/supabaseClient'
 import type { Settings } from '../../types'
 import { Section, TextField, NumberField, TimeField } from '../../components/admin/SettingsFields'
 import OpenPlaySettingsPanel from '../../components/admin/OpenPlaySettingsPanel'
+import { getErrorMessage, logError } from '../../lib/errors'
 
 export default function AdminSettings() {
   const { settings, updateSettings } = useSettings()
@@ -27,13 +28,8 @@ export default function AdminSettings() {
       setSavedMsg('Settings saved successfully.')
       setTimeout(() => setSavedMsg(null), 3000)
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error(`Failed to save "${section}":`, err)
-      setErrorMsg(
-        err instanceof Error
-          ? `Couldn't save "${section}": ${err.message}`
-          : `Couldn't save "${section}". Please try again.`,
-      )
+      logError(`Failed to save "${section}":`, err)
+      setErrorMsg(`Couldn't save "${section}": ${getErrorMessage(err)}`)
     } finally {
       setSaving(null)
     }

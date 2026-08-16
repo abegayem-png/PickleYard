@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useSettings } from '../../context/SettingsContext'
 import { useOpenPlaySessions } from '../../hooks/useOpenPlaySessions'
 import { formatDateLong, formatTime12h, todayISO } from '../../lib/time'
+import { getErrorMessage } from '../../lib/errors'
 import type { OpenPlayRegistration, OpenPlaySessionWithCount } from '../../types'
 import Badge from '../../components/ui/Badge'
 import Button from '../../components/ui/Button'
@@ -104,7 +105,7 @@ function CreateSessionCard({
       await onCreate({ ...form, source: 'specific' })
       onDone()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create session.')
+      setError(getErrorMessage(err, 'Failed to create session.'))
     } finally {
       setBusy(false)
     }
@@ -275,7 +276,7 @@ function PlayersPanel({
       setMobile('')
       await refresh()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add player.')
+      setError(getErrorMessage(err, 'Failed to add player.'))
     } finally {
       setBusy(false)
     }

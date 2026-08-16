@@ -3,6 +3,7 @@ import { useSettings } from '../../context/SettingsContext'
 import { useOpenPlaySessions } from '../../hooks/useOpenPlaySessions'
 import { WEEKDAY_LABELS, DISPLAY_WEEKDAYS } from '../../lib/openPlay'
 import { formatDateLong, formatTime12h, todayISO } from '../../lib/time'
+import { getErrorMessage, logError } from '../../lib/errors'
 import type { OpenPlayScheduleType, Settings } from '../../types'
 import Button from '../ui/Button'
 import Card from '../ui/Card'
@@ -48,9 +49,8 @@ export default function OpenPlaySettingsPanel() {
       setSavedMsg('Settings saved successfully.')
       setTimeout(() => setSavedMsg(null), 3000)
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error(`Failed to save "${section}":`, err)
-      setErrorMsg(err instanceof Error ? `Couldn't save "${section}": ${err.message}` : `Couldn't save "${section}".`)
+      logError(`Failed to save "${section}":`, err)
+      setErrorMsg(`Couldn't save "${section}": ${getErrorMessage(err)}`)
     } finally {
       setSaving(null)
     }
@@ -77,9 +77,8 @@ export default function OpenPlaySettingsPanel() {
       })
       setNewDate('')
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('Failed to add Open Play date:', err)
-      setErrorMsg(err instanceof Error ? err.message : "Couldn't add that date.")
+      logError('Failed to add Open Play date:', err)
+      setErrorMsg(getErrorMessage(err, "Couldn't add that date."))
     }
   }
 

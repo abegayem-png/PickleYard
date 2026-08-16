@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useSettings } from '../../context/SettingsContext'
 import { useOpenPlaySessions } from '../../hooks/useOpenPlaySessions'
 import { formatDateShort, formatTime12h, todayISO } from '../../lib/time'
+import { getErrorMessage } from '../../lib/errors'
 import type { OpenPlaySessionWithCount } from '../../types'
 import Button from '../ui/Button'
 import Card from '../ui/Card'
@@ -72,7 +73,7 @@ function OpenPlayCard({
       setJoined(true)
       setJoining(false)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not join — please try again.')
+      setError(getErrorMessage(err, 'Could not join — please try again.'))
     } finally {
       setSubmitting(false)
     }

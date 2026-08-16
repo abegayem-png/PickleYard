@@ -5,6 +5,7 @@ import { store } from '../../lib/store'
 import { calculatePrice, getAvailableDurations, getAvailableStartHours } from '../../lib/pricing'
 import type { BlockedSlotLike } from '../../lib/pricing'
 import { formatTime12h, hourToTime, minutesToTime, todayISO } from '../../lib/time'
+import { getErrorMessage } from '../../lib/errors'
 import MiniCalendar from '../../components/booking/MiniCalendar'
 import Button from '../../components/ui/Button'
 import Card from '../../components/ui/Card'
@@ -101,7 +102,7 @@ export default function AdminManualBooking() {
       if (autoConfirm) await store.updateBookingStatus(booking.id, 'confirmed')
       navigate('/admin/bookings')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create booking.')
+      setError(getErrorMessage(err, 'Failed to create booking.'))
     } finally {
       setSubmitting(false)
     }

@@ -4,6 +4,7 @@ import { store } from '../lib/store'
 import { calculatePrice, getAvailableDurations, getAvailableStartHours } from '../lib/pricing'
 import type { BookingLike, BlockedSlotLike } from '../lib/pricing'
 import { hourToTime, minutesToTime, timeToMinutes, todayISO } from '../lib/time'
+import { getErrorMessage } from '../lib/errors'
 import type { Booking, BookingInput, PaymentMethod, PromoPreview } from '../types'
 
 export type BookingStep = 'date' | 'time' | 'duration' | 'info' | 'summary' | 'confirmation'
@@ -212,7 +213,7 @@ export function useBookingFlow() {
       setConfirmedBooking(booking)
       setStep('confirmation')
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Something went wrong. Please try again.')
+      setSubmitError(getErrorMessage(err))
     } finally {
       setSubmitting(false)
     }
