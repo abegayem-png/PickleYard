@@ -49,11 +49,12 @@ function OpenPlayCard({
   addRegistration,
 }: {
   session: OpenPlaySessionWithCount
-  addRegistration: (sessionId: string, name: string, mobile: string) => Promise<void>
+  addRegistration: (sessionId: string, name: string, mobile: string, facebookName?: string) => Promise<void>
 }) {
   const [joining, setJoining] = useState(false)
   const [name, setName] = useState('')
   const [mobile, setMobile] = useState('')
+  const [facebookName, setFacebookName] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [joined, setJoined] = useState(false)
@@ -69,7 +70,7 @@ function OpenPlayCard({
     setSubmitting(true)
     setError(null)
     try {
-      await addRegistration(session.id, name.trim(), mobile.trim())
+      await addRegistration(session.id, name.trim(), mobile.trim(), facebookName.trim())
       setJoined(true)
       setJoining(false)
     } catch (err) {
@@ -123,6 +124,13 @@ function OpenPlayCard({
               className="h-11 rounded-xl border border-white/10 bg-court-800 px-3 text-sm text-cream placeholder:text-cream-dim/50 focus:border-lime-500/50 focus:outline-none"
             />
           </div>
+          <input
+            type="text"
+            value={facebookName}
+            onChange={(e) => setFacebookName(e.target.value)}
+            placeholder="Facebook Name (optional)"
+            className="h-11 w-full rounded-xl border border-white/10 bg-court-800 px-3 text-sm text-cream placeholder:text-cream-dim/50 focus:border-lime-500/50 focus:outline-none"
+          />
           {error && <p className="text-xs font-medium text-red-400">{error}</p>}
           <div className="flex gap-2">
             <Button size="md" fullWidth onClick={handleJoin} disabled={submitting}>

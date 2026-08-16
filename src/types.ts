@@ -89,6 +89,7 @@ export interface OpenPlayRegistration {
   sessionId: string
   playerName: string
   mobileNumber: string
+  facebookName: string
   createdAt: string
 }
 
@@ -96,6 +97,7 @@ export interface OpenPlayRegistrationInput {
   sessionId: string
   playerName: string
   mobileNumber: string
+  facebookName?: string
 }
 
 export interface PromoCode {

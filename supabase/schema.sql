@@ -444,8 +444,13 @@ create table if not exists open_play_registrations (
   session_id uuid not null references open_play_sessions (id) on delete cascade,
   player_name text not null,
   mobile_number text not null,
+  facebook_name text,
   created_at timestamptz not null default now()
 );
+
+-- Defensive guard in case this table already existed from an earlier,
+-- partial version of this script — safe no-op if the column is present.
+alter table open_play_registrations add column if not exists facebook_name text;
 
 create index if not exists open_play_registrations_session_idx on open_play_registrations (session_id);
 

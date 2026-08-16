@@ -351,7 +351,12 @@ export const localStore: DataStore = {
 
   async addOpenPlayRegistration(input) {
     const registrations = read<OpenPlayRegistration[]>(KEYS.openPlayRegistrations, [])
-    const registration: OpenPlayRegistration = { id: newId(), createdAt: new Date().toISOString(), ...input }
+    const registration: OpenPlayRegistration = {
+      id: newId(),
+      createdAt: new Date().toISOString(),
+      ...input,
+      facebookName: input.facebookName ?? '',
+    }
     registrations.push(registration)
     write(KEYS.openPlayRegistrations, registrations)
     return registration

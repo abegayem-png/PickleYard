@@ -146,7 +146,7 @@ function SessionCard({
   onUpdate: (id: string, patch: Partial<{ sessionDate: string; startTime: string; endTime: string; pricePerPlayer: number; playerLimit: number }>) => Promise<void>
   onCancel: (id: string) => Promise<void>
   listRegistrations: (sessionId: string) => Promise<OpenPlayRegistration[]>
-  addRegistration: (sessionId: string, name: string, mobile: string) => Promise<void>
+  addRegistration: (sessionId: string, name: string, mobile: string, facebookName?: string) => Promise<void>
   removeRegistration: (id: string) => Promise<void>
 }) {
   const [editing, setEditing] = useState(false)
@@ -239,13 +239,14 @@ function PlayersPanel({
 }: {
   sessionId: string
   listRegistrations: (sessionId: string) => Promise<OpenPlayRegistration[]>
-  addRegistration: (sessionId: string, name: string, mobile: string) => Promise<void>
+  addRegistration: (sessionId: string, name: string, mobile: string, facebookName?: string) => Promise<void>
   removeRegistration: (id: string) => Promise<void>
 }) {
   const [players, setPlayers] = useState<OpenPlayRegistration[]>([])
   const [loading, setLoading] = useState(true)
   const [name, setName] = useState('')
   const [mobile, setMobile] = useState('')
+  const [facebookName, setFacebookName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -271,9 +272,10 @@ function PlayersPanel({
     setBusy(true)
     setError(null)
     try {
-      await addRegistration(sessionId, name.trim(), mobile.trim())
+      await addRegistration(sessionId, name.trim(), mobile.trim(), facebookName.trim())
       setName('')
       setMobile('')
+      setFacebookName('')
       await refresh()
     } catch (err) {
       setError(getErrorMessage(err, 'Failed to add player.'))
@@ -300,7 +302,10 @@ function PlayersPanel({
             <div key={p.id} className="flex items-center justify-between gap-3 rounded-lg bg-court-900/50 px-3 py-2">
               <div>
                 <p className="text-sm font-semibold text-cream">{p.playerName}</p>
-                <p className="text-xs text-cream-dim">{p.mobileNumber}</p>
+                <p className="text-xs text-cream-dim">
+                  {p.mobileNumber}
+                  {p.facebookName && ` · FB: ${p.facebookName}`}
+                </p>
               </div>
               <button
                 onClick={() => handleRemove(p.id)}
@@ -326,6 +331,13 @@ function PlayersPanel({
           value={mobile}
           onChange={(e) => setMobile(e.target.value)}
           placeholder="Mobile number"
+          className="h-10 flex-1 rounded-lg border border-white/10 bg-court-800 px-3 text-sm text-cream placeholder:text-cream-dim/50 focus:border-lime-500/50 focus:outline-none"
+        />
+        <input
+          type="text"
+          value={facebookName}
+          onChange={(e) => setFacebookName(e.target.value)}
+          placeholder="Facebook name (optional)"
           className="h-10 flex-1 rounded-lg border border-white/10 bg-court-800 px-3 text-sm text-cream placeholder:text-cream-dim/50 focus:border-lime-500/50 focus:outline-none"
         />
         <button

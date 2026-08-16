@@ -162,6 +162,7 @@ function openPlayRegistrationFromRow(row: Record<string, unknown>): OpenPlayRegi
     sessionId: row.session_id as string,
     playerName: row.player_name as string,
     mobileNumber: row.mobile_number as string,
+    facebookName: (row.facebook_name as string) ?? '',
     createdAt: row.created_at as string,
   }
 }
@@ -462,6 +463,7 @@ export const supabaseStore: DataStore = {
       session_id: input.sessionId,
       player_name: input.playerName,
       mobile_number: input.mobileNumber,
+      facebook_name: input.facebookName?.trim() || null,
     }
     const { data, error } = await sb().from('open_play_registrations').insert(row).select('*').single()
     if (error) throw error
