@@ -606,6 +606,36 @@ create policy "admins can remove open play registrations" on open_play_registrat
 grant select on open_play_registration_counts to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
+-- Base table grants
+--
+-- IMPORTANT: RLS policies only ever *restrict* access — Postgres still
+-- requires the ordinary table-level GRANT before a role can touch a table at
+-- all, RLS or not. Supabase projects usually pre-grant this automatically for
+-- anon/authenticated on new tables, but that isn't guaranteed for every
+-- project/table, and a missing grant fails with "permission denied" (or, for
+-- INSERT, sometimes surfaces as a confusing RLS-violation error) even though
+-- every policy above is correct. These grants mirror the policies exactly —
+-- each one only *unlocks* what its matching policy already allows.
+-- ---------------------------------------------------------------------------
+grant select, insert, update, delete on bookings to authenticated;
+grant insert on bookings to anon;
+
+grant select, insert, update, delete on blocked_slots to authenticated;
+grant select on blocked_slots to anon;
+
+grant select, insert, update, delete on settings to authenticated;
+grant select on settings to anon;
+
+grant select, insert, update, delete on open_play_sessions to authenticated;
+grant select on open_play_sessions to anon;
+
+grant select, insert, delete on open_play_registrations to authenticated;
+grant insert on open_play_registrations to anon;
+
+grant select, insert, update, delete on promo_codes to authenticated;
+-- promo_codes has no anon grant at all — never publicly readable/writable.
+
+-- ---------------------------------------------------------------------------
 -- Admin access
 -- ---------------------------------------------------------------------------
 -- Create your admin user under Supabase Dashboard → Authentication → Users
