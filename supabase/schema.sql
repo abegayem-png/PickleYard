@@ -289,6 +289,58 @@ create trigger trg_set_booking_pricing
   before insert on bookings
   for each row execute function set_booking_pricing();
 
+-- ---------------------------------------------------------------------------
+-- create_booking — the only way any client (customer or admin) creates a
+-- booking. SECURITY DEFINER so it can insert into `bookings` and return the
+-- new row without the caller needing any direct table grant: `anon` gets no
+-- SELECT on `bookings` (customers must never read other people's bookings),
+-- and `.insert().select()` from the client would otherwise fail because
+-- returning the inserted row requires read access under RLS. Routing
+-- creation through one function is also a single, auditable place to enforce
+-- validation instead of trusting whatever a direct table insert contained.
+-- Pricing/promo fields are intentionally not parameters — the
+-- trg_set_booking_pricing trigger above computes them authoritatively.
+-- ---------------------------------------------------------------------------
+create or replace function create_booking(
+  p_customer_name text,
+  p_mobile_number text,
+  p_email text,
+  p_number_of_players integer,
+  p_booking_date date,
+  p_start_time time,
+  p_duration integer,
+  p_notes text,
+  p_payment_method text,
+  p_promo_code text
+)
+returns bookings
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  new_booking bookings;
+begin
+  insert into bookings (
+    customer_name, mobile_number, email, number_of_players,
+    booking_date, start_time, end_time, duration,
+    notes, payment_method, promo_code,
+    rate_breakdown, total_amount
+  ) values (
+    p_customer_name, p_mobile_number, p_email, p_number_of_players,
+    p_booking_date, p_start_time, p_start_time, p_duration,
+    p_notes, p_payment_method, p_promo_code,
+    '[]'::jsonb, 0
+  )
+  returning * into new_booking;
+
+  return new_booking;
+end;
+$$;
+
+revoke all on function create_booking(text, text, text, integer, date, time, integer, text, text, text) from public;
+grant execute on function create_booking(text, text, text, integer, date, time, integer, text, text, text) to anon, authenticated;
+
 -- Anon-callable, read-only preview used by the "Apply" button on the booking
 -- page — runs the exact same trusted logic as the insert trigger above, so
 -- what the customer previews is what they'll actually be charged.
@@ -513,13 +565,13 @@ create policy "admins can manage promo codes" on promo_codes
   using (true)
   with check (true);
 
--- bookings: customers can create bookings, but cannot read/update/delete
--- them directly (they use public_availability + the RPC above instead).
--- Only authenticated admins can read/manage the full table.
+-- bookings: nobody gets a direct INSERT policy — all creation (customer and
+-- admin alike) goes through the create_booking() SECURITY DEFINER function
+-- above, which bypasses RLS internally instead of needing one. Customers
+-- cannot read/update/delete rows directly either (they use
+-- public_availability + get_booking_by_reference() instead). Only
+-- authenticated admins can read/manage the full table.
 drop policy if exists "anon can create bookings" on bookings;
-create policy "anon can create bookings" on bookings
-  for insert to anon, authenticated
-  with check (true);
 
 drop policy if exists "admins can view bookings" on bookings;
 create policy "admins can view bookings" on bookings
@@ -622,8 +674,10 @@ grant select on open_play_registration_counts to anon, authenticated;
 -- every policy above is correct. These grants mirror the policies exactly —
 -- each one only *unlocks* what its matching policy already allows.
 -- ---------------------------------------------------------------------------
-grant select, insert, update, delete on bookings to authenticated;
-grant insert on bookings to anon;
+-- No INSERT grant for anon or authenticated: all booking creation goes
+-- through create_booking(), a SECURITY DEFINER function that inserts
+-- internally regardless of the caller's own table grants.
+grant select, update, delete on bookings to authenticated;
 
 grant select, insert, update, delete on blocked_slots to authenticated;
 grant select on blocked_slots to anon;

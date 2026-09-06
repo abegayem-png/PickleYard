@@ -290,28 +290,29 @@ export const supabaseStore: DataStore = {
   },
 
   async createBooking(input) {
-    // rate_breakdown/total_amount/end_time are sent for completeness, but the
-    // `set_booking_pricing` trigger recomputes and overwrites all of them (plus
-    // normal_total/discount_amount, and re-validates promo_code) server-side —
-    // this insert payload is never trusted as the source of truth for pricing.
-    const row = {
-      customer_name: input.customerName,
-      mobile_number: input.mobileNumber,
-      email: input.email,
-      number_of_players: input.numberOfPlayers,
-      booking_date: input.bookingDate,
-      start_time: input.startTime,
-      end_time: input.endTime,
-      duration: input.duration,
-      rate_breakdown: input.rateBreakdown,
-      total_amount: input.totalAmount,
-      notes: input.notes ?? null,
-      payment_method: input.paymentMethod,
-      promo_code: input.promoCode?.trim() || null,
-    }
-    const { data, error } = await sb().from('bookings').insert(row).select('*').single()
+    // Booking creation goes through a SECURITY DEFINER RPC rather than a direct
+    // `.insert().select()`, for two reasons: (1) `anon` customers have no SELECT
+    // policy on `bookings` (by design — they must never read other customers'
+    // rows), and `.select()` after insert requires read access to return the
+    // new row, which a plain INSERT policy alone doesn't grant; and (2) end_time/
+    // rate_breakdown/total_amount/normal_total/discount_amount/promo_code are
+    // never trusted from this payload — the RPC's underlying trigger recomputes
+    // and overwrites all pricing server-side regardless of what's sent here.
+    const { data, error } = await sb().rpc('create_booking', {
+      p_customer_name: input.customerName,
+      p_mobile_number: input.mobileNumber,
+      p_email: input.email,
+      p_number_of_players: input.numberOfPlayers,
+      p_booking_date: input.bookingDate,
+      p_start_time: input.startTime,
+      p_duration: input.duration,
+      p_notes: input.notes ?? null,
+      p_payment_method: input.paymentMethod,
+      p_promo_code: input.promoCode?.trim() || null,
+    })
     if (error) throw error
-    return bookingFromRow(data)
+    const row = Array.isArray(data) ? data[0] : data
+    return bookingFromRow(row)
   },
 
   async updateBookingStatus(id, status) {
