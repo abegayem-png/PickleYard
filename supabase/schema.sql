@@ -514,6 +514,75 @@ create or replace view open_play_registration_counts as
   group by session_id;
 
 -- ---------------------------------------------------------------------------
+-- register_open_play — the only way any client (customer or admin) joins an
+-- Open Play session. SECURITY DEFINER so it can insert into
+-- open_play_registrations without the caller needing SELECT on that table
+-- (which holds player name/mobile/Facebook name — no customer should ever
+-- read another customer's). Locks the session row for the duration of the
+-- check-then-insert so two simultaneous joins can't both slip in over the
+-- player limit. Returns only non-sensitive fields — never the roster.
+-- ---------------------------------------------------------------------------
+create or replace function register_open_play(
+  p_session_id uuid,
+  p_player_name text,
+  p_mobile_number text,
+  p_facebook_name text
+)
+returns table (
+  success boolean,
+  reason text,
+  registration_id uuid,
+  registered_count integer,
+  remaining_slots integer
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  sess record;
+  current_count integer;
+  new_id uuid;
+begin
+  select * into sess from open_play_sessions where id = p_session_id for update;
+
+  if not found then
+    return query select false, 'This Open Play session could not be found.', null::uuid, 0, 0;
+    return;
+  end if;
+
+  if sess.status <> 'scheduled' then
+    return query select false, 'This Open Play session is no longer open for registration.', null::uuid, 0, 0;
+    return;
+  end if;
+
+  if p_player_name is null or length(trim(p_player_name)) = 0
+     or p_mobile_number is null or length(trim(p_mobile_number)) = 0 then
+    return query select false, 'Name and mobile number are required.', null::uuid, 0, 0;
+    return;
+  end if;
+
+  select count(*) into current_count from open_play_registrations where session_id = p_session_id;
+
+  if current_count >= sess.player_limit then
+    return query select false, 'This session is full.', null::uuid, current_count, 0;
+    return;
+  end if;
+
+  insert into open_play_registrations (session_id, player_name, mobile_number, facebook_name)
+  values (p_session_id, trim(p_player_name), trim(p_mobile_number), nullif(trim(coalesce(p_facebook_name, '')), ''))
+  returning id into new_id;
+
+  current_count := current_count + 1;
+
+  return query select true, null::text, new_id, current_count, greatest(sess.player_limit - current_count, 0);
+end;
+$$;
+
+revoke all on function register_open_play(uuid, text, text, text) from public;
+grant execute on function register_open_play(uuid, text, text, text) to anon, authenticated;
+
+-- ---------------------------------------------------------------------------
 -- Public availability view — exposes only what's needed to compute open
 -- slots (no customer PII) so the booking widget can query it as `anon`.
 -- ---------------------------------------------------------------------------
@@ -640,9 +709,10 @@ create policy "admins can manage open play sessions" on open_play_sessions
   with check (true);
 
 -- open_play_registrations: contains PII, so only admins can read the full
--- list (used by "View Players"). Anyone can register (customers joining
--- from the public site) or be manually added by an admin; only admins can
--- remove a registration.
+-- list (used by "View Players"). Nobody gets a direct INSERT policy —
+-- joining (customer or admin-added) goes through register_open_play()
+-- above, which bypasses RLS internally instead of needing one. Only admins
+-- can remove a registration.
 alter table open_play_registrations enable row level security;
 
 drop policy if exists "admins can view open play registrations" on open_play_registrations;
@@ -651,9 +721,6 @@ create policy "admins can view open play registrations" on open_play_registratio
   using (true);
 
 drop policy if exists "anyone can register for open play" on open_play_registrations;
-create policy "anyone can register for open play" on open_play_registrations
-  for insert to anon, authenticated
-  with check (true);
 
 drop policy if exists "admins can remove open play registrations" on open_play_registrations;
 create policy "admins can remove open play registrations" on open_play_registrations
@@ -688,8 +755,10 @@ grant select on settings to anon;
 grant select, insert, update, delete on open_play_sessions to authenticated;
 grant select on open_play_sessions to anon;
 
-grant select, insert, delete on open_play_registrations to authenticated;
-grant insert on open_play_registrations to anon;
+-- No INSERT grant for anon or authenticated: all Open Play registration
+-- goes through register_open_play(), which inserts internally regardless
+-- of the caller's own table grants.
+grant select, delete on open_play_registrations to authenticated;
 
 grant select, insert, update, delete on promo_codes to authenticated;
 -- promo_codes has no anon grant at all — never publicly readable/writable.

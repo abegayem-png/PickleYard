@@ -460,15 +460,31 @@ export const supabaseStore: DataStore = {
   },
 
   async addOpenPlayRegistration(input) {
-    const row = {
-      session_id: input.sessionId,
-      player_name: input.playerName,
-      mobile_number: input.mobileNumber,
-      facebook_name: input.facebookName?.trim() || null,
-    }
-    const { data, error } = await sb().from('open_play_registrations').insert(row).select('*').single()
+    // Same reasoning as bookings' create_booking RPC: `anon` has no SELECT on
+    // open_play_registrations (it holds player name/mobile/Facebook name —
+    // other customers must never be able to read that), so `.insert().select()`
+    // fails needing read access just to return the new row. This RPC inserts
+    // and validates (session open, not full) server-side and returns only
+    // non-sensitive fields — never the roster itself.
+    const { data, error } = await sb().rpc('register_open_play', {
+      p_session_id: input.sessionId,
+      p_player_name: input.playerName,
+      p_mobile_number: input.mobileNumber,
+      p_facebook_name: input.facebookName?.trim() || null,
+    })
     if (error) throw error
-    return openPlayRegistrationFromRow(data)
+    const row = Array.isArray(data) ? data[0] : data
+    if (!row?.success) {
+      throw new Error(row?.reason || 'Could not complete registration.')
+    }
+    return {
+      id: row.registration_id as string,
+      sessionId: input.sessionId,
+      playerName: input.playerName,
+      mobileNumber: input.mobileNumber,
+      facebookName: input.facebookName ?? '',
+      createdAt: new Date().toISOString(),
+    }
   },
 
   async removeOpenPlayRegistration(id) {
