@@ -8,6 +8,7 @@ import type {
   OpenPlayRegistration,
   PromoCode,
   PromoPreview,
+  MiniMartItem,
 } from '../../types'
 import { DEFAULT_SETTINGS } from '../../types'
 import { calculatePrice, generateBookingReference } from '../pricing'
@@ -22,7 +23,46 @@ const KEYS = {
   openPlaySessions: 'pkl_open_play_sessions',
   openPlayRegistrations: 'pkl_open_play_registrations',
   promoCodes: 'pkl_promo_codes',
+  miniMartItems: 'pkl_mini_mart_items',
 }
+
+// Demo-mode-only seed so the Mini Mart page isn't empty on first load. Real
+// deployments start with an empty table — the admin adds their own products.
+const DEFAULT_MINI_MART_ITEMS: MiniMartItem[] = [
+  {
+    id: 'mm-demo-gatorade',
+    name: 'Gatorade',
+    description: 'Cold sports drink, assorted flavors.',
+    price: 45,
+    category: 'drinks',
+    imageUrl: '',
+    isAvailable: true,
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+  },
+  {
+    id: 'mm-demo-cheeseburger',
+    name: 'Cheeseburger',
+    description: 'Grilled beef patty with cheese.',
+    price: 75,
+    category: 'food',
+    imageUrl: '',
+    isAvailable: true,
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+  },
+  {
+    id: 'mm-demo-water',
+    name: 'Bottled Water',
+    description: '500ml.',
+    price: 20,
+    category: 'drinks',
+    imageUrl: '',
+    isAvailable: true,
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+  },
+]
 
 // Mirrors the PLAYMORE row seeded by supabase/schema.sql, so demo mode has
 // the same default promo code out of the box. Only used as a fallback when
@@ -418,6 +458,37 @@ export const localStore: DataStore = {
       daytimeRate: promo.daytimeRate,
       nighttimeRate: promo.nighttimeRate,
     }
+  },
+
+  async listMiniMartItems() {
+    const items = read<MiniMartItem[]>(KEYS.miniMartItems, DEFAULT_MINI_MART_ITEMS)
+    return [...items].sort((a, b) => a.name.localeCompare(b.name))
+  },
+
+  async createMiniMartItem(input) {
+    const items = read<MiniMartItem[]>(KEYS.miniMartItems, DEFAULT_MINI_MART_ITEMS)
+    const now = new Date().toISOString()
+    const item: MiniMartItem = { id: newId(), createdAt: now, updatedAt: now, ...input }
+    items.push(item)
+    write(KEYS.miniMartItems, items)
+    return item
+  },
+
+  async updateMiniMartItem(id, patch) {
+    const items = read<MiniMartItem[]>(KEYS.miniMartItems, DEFAULT_MINI_MART_ITEMS)
+    const idx = items.findIndex((i) => i.id === id)
+    if (idx === -1) throw new Error('Mini Mart item not found')
+    items[idx] = { ...items[idx], ...patch, updatedAt: new Date().toISOString() }
+    write(KEYS.miniMartItems, items)
+    return items[idx]
+  },
+
+  async deleteMiniMartItem(id) {
+    const items = read<MiniMartItem[]>(KEYS.miniMartItems, DEFAULT_MINI_MART_ITEMS)
+    write(
+      KEYS.miniMartItems,
+      items.filter((i) => i.id !== id),
+    )
   },
 }
 

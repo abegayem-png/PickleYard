@@ -3,6 +3,7 @@ import { SettingsProvider } from './context/SettingsContext'
 import { AdminAuthProvider } from './context/AdminAuthContext'
 import Home from './pages/Home'
 import BookingLookup from './pages/BookingLookup'
+import MiniMart from './pages/MiniMart'
 import AdminLogin from './pages/admin/AdminLogin'
 import AdminLayout from './pages/admin/AdminLayout'
 import AdminOverview from './pages/admin/AdminOverview'
@@ -13,6 +14,7 @@ import AdminManualBooking from './pages/admin/AdminManualBooking'
 import AdminSettings from './pages/admin/AdminSettings'
 import AdminOpenPlay from './pages/admin/AdminOpenPlay'
 import AdminPromoCodes from './pages/admin/AdminPromoCodes'
+import AdminMiniMart from './pages/admin/AdminMiniMart'
 
 export default function App() {
   return (
@@ -22,6 +24,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/my-booking" element={<BookingLookup />} />
+            <Route path="/mini-mart" element={<MiniMart />} />
 
             <Route path="/admin/login" element={<AdminLogin />} />
             <Route path="/admin" element={<AdminLayout />}>
@@ -32,6 +35,7 @@ export default function App() {
               <Route path="new-booking" element={<AdminManualBooking />} />
               <Route path="open-play" element={<AdminOpenPlay />} />
               <Route path="promo-codes" element={<AdminPromoCodes />} />
+              <Route path="mini-mart" element={<AdminMiniMart />} />
               <Route path="settings" element={<AdminSettings />} />
             </Route>
           </Routes>

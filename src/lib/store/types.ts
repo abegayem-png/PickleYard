@@ -14,6 +14,8 @@ import type {
   PromoCodeInput,
   PromoPreview,
   ActivePromoBanner,
+  MiniMartItem,
+  MiniMartItemInput,
 } from '../../types'
 
 /** Lightweight shape used only for availability/pricing checks — no customer PII. */
@@ -78,4 +80,10 @@ export interface DataStore {
 
   /** The one promo code (if any) currently eligible to show its public banner. */
   getActivePromoBanner(): Promise<ActivePromoBanner | null>
+
+  /** All Mini Mart products, any status — the public page filters sold-out items client-side. */
+  listMiniMartItems(): Promise<MiniMartItem[]>
+  createMiniMartItem(input: MiniMartItemInput): Promise<MiniMartItem>
+  updateMiniMartItem(id: string, patch: Partial<MiniMartItemInput>): Promise<MiniMartItem>
+  deleteMiniMartItem(id: string): Promise<void>
 }

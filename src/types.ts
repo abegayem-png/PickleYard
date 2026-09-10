@@ -241,3 +241,41 @@ export const DEFAULT_SETTINGS: Settings = {
   openPlayPlayerLimit: 16,
   openPlayBlockBookings: true,
 }
+
+// ---------------------------------------------------------------------------
+// Mini Mart — a separate, self-contained product menu (food/snacks/drinks/
+// court essentials). No relation to bookings/Open Play/promo codes: no
+// shared tables, no shared RLS, no shared UI beyond the site's header/footer
+// and design system.
+// ---------------------------------------------------------------------------
+export type MiniMartCategory = 'food' | 'snacks' | 'drinks' | 'court_essentials'
+
+export const MINI_MART_CATEGORIES: MiniMartCategory[] = ['food', 'snacks', 'drinks', 'court_essentials']
+
+export const MINI_MART_CATEGORY_LABELS: Record<MiniMartCategory, string> = {
+  food: 'Food',
+  snacks: 'Snacks',
+  drinks: 'Drinks',
+  court_essentials: 'Court Essentials',
+}
+
+export interface MiniMartItem {
+  id: string
+  name: string
+  description: string
+  price: number
+  category: MiniMartCategory
+  imageUrl: string
+  isAvailable: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface MiniMartItemInput {
+  name: string
+  description: string
+  price: number
+  category: MiniMartCategory
+  imageUrl: string
+  isAvailable: boolean
+}

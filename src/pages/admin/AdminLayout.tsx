@@ -9,6 +9,7 @@ const TABS = [
   { to: '/admin/new-booking', label: 'New Booking' },
   { to: '/admin/open-play', label: 'Open Play' },
   { to: '/admin/promo-codes', label: 'Promo Codes' },
+  { to: '/admin/mini-mart', label: 'Mini Mart' },
   { to: '/admin/settings', label: 'Settings' },
 ]
 

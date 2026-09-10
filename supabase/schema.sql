@@ -764,6 +764,77 @@ grant select, insert, update, delete on promo_codes to authenticated;
 -- promo_codes has no anon grant at all — never publicly readable/writable.
 
 -- ---------------------------------------------------------------------------
+-- mini_mart_items — a separate, self-contained product menu (food/snacks/
+-- drinks/court essentials) for the public /mini-mart page. No relation to
+-- bookings/Open Play/promo codes: no shared tables, no shared policies. No
+-- customer PII is ever stored here (orders aren't persisted — customers just
+-- show their phone to staff), so this table is safe to read publicly in full.
+-- ---------------------------------------------------------------------------
+create table if not exists mini_mart_items (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  description text not null default '',
+  price numeric(10, 2) not null,
+  category text not null check (category in ('food', 'snacks', 'drinks', 'court_essentials')),
+  image_url text not null default '',
+  is_available boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists mini_mart_items_category_idx on mini_mart_items (category);
+
+create or replace function touch_mini_mart_item_updated_at() returns trigger as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_touch_mini_mart_item on mini_mart_items;
+create trigger trg_touch_mini_mart_item
+  before update on mini_mart_items
+  for each row execute function touch_mini_mart_item_updated_at();
+
+alter table mini_mart_items enable row level security;
+
+-- Publicly readable (including sold-out items, so the page can show them
+-- faded rather than hiding them) — only admins can add/edit/delete.
+drop policy if exists "anyone can view mini mart items" on mini_mart_items;
+create policy "anyone can view mini mart items" on mini_mart_items
+  for select to anon, authenticated
+  using (true);
+
+drop policy if exists "admins can manage mini mart items" on mini_mart_items;
+create policy "admins can manage mini mart items" on mini_mart_items
+  for all to authenticated
+  using (true)
+  with check (true);
+
+grant select on mini_mart_items to anon;
+grant select, insert, update, delete on mini_mart_items to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Storage bucket for product photos. Public read (photos are shown on the
+-- public menu), admin-only write. Scoped entirely to this one bucket, so it
+-- can't affect any other Storage bucket this project may have.
+-- ---------------------------------------------------------------------------
+insert into storage.buckets (id, name, public)
+values ('mini-mart-images', 'mini-mart-images', true)
+on conflict (id) do nothing;
+
+drop policy if exists "public can view mini mart images" on storage.objects;
+create policy "public can view mini mart images" on storage.objects
+  for select to anon, authenticated
+  using (bucket_id = 'mini-mart-images');
+
+drop policy if exists "admins can manage mini mart images" on storage.objects;
+create policy "admins can manage mini mart images" on storage.objects
+  for all to authenticated
+  using (bucket_id = 'mini-mart-images')
+  with check (bucket_id = 'mini-mart-images');
+
+-- ---------------------------------------------------------------------------
 -- Admin access
 -- ---------------------------------------------------------------------------
 -- Create your admin user under Supabase Dashboard → Authentication → Users

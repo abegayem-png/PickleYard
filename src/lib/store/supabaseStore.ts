@@ -10,6 +10,7 @@ import type {
   PromoCodeInput,
   PromoPreview,
   ActivePromoBanner,
+  MiniMartItem,
 } from '../../types'
 import { DEFAULT_SETTINGS } from '../../types'
 import { supabase } from '../supabaseClient'
@@ -201,6 +202,31 @@ function promoCodeToRow(input: Partial<PromoCodeInput>): Record<string, unknown>
   if (input.maxUsesPerCustomer !== undefined) row.max_uses_per_customer = input.maxUsesPerCustomer
   if (input.showBanner !== undefined) row.show_banner = input.showBanner
   if (input.bannerMessage !== undefined) row.banner_message = input.bannerMessage
+  return row
+}
+
+function miniMartItemFromRow(row: Record<string, unknown>): MiniMartItem {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    description: (row.description as string) ?? '',
+    price: Number(row.price),
+    category: row.category as MiniMartItem['category'],
+    imageUrl: (row.image_url as string) ?? '',
+    isAvailable: Boolean(row.is_available),
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+  }
+}
+
+function miniMartItemToRow(input: Partial<import('../../types').MiniMartItemInput>): Record<string, unknown> {
+  const row: Record<string, unknown> = {}
+  if (input.name !== undefined) row.name = input.name
+  if (input.description !== undefined) row.description = input.description
+  if (input.price !== undefined) row.price = input.price
+  if (input.category !== undefined) row.category = input.category
+  if (input.imageUrl !== undefined) row.image_url = input.imageUrl
+  if (input.isAvailable !== undefined) row.is_available = input.isAvailable
   return row
 }
 
@@ -561,5 +587,33 @@ export const supabaseStore: DataStore = {
       daytimeRate: Number(data.daytime_rate),
       nighttimeRate: Number(data.nighttime_rate),
     }
+  },
+
+  async listMiniMartItems() {
+    const { data, error } = await sb().from('mini_mart_items').select('*').order('name', { ascending: true })
+    if (error) throw error
+    return (data ?? []).map(miniMartItemFromRow)
+  },
+
+  async createMiniMartItem(input) {
+    const { data, error } = await sb().from('mini_mart_items').insert(miniMartItemToRow(input)).select('*').single()
+    if (error) throw error
+    return miniMartItemFromRow(data)
+  },
+
+  async updateMiniMartItem(id, patch) {
+    const { data, error } = await sb()
+      .from('mini_mart_items')
+      .update(miniMartItemToRow(patch))
+      .eq('id', id)
+      .select('*')
+      .single()
+    if (error) throw error
+    return miniMartItemFromRow(data)
+  },
+
+  async deleteMiniMartItem(id) {
+    const { error } = await sb().from('mini_mart_items').delete().eq('id', id)
+    if (error) throw error
   },
 }
