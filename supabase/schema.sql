@@ -835,6 +835,211 @@ create policy "admins can manage mini mart images" on storage.objects
   with check (bucket_id = 'mini-mart-images');
 
 -- ---------------------------------------------------------------------------
+-- mini_mart_orders / mini_mart_order_items — customer orders placed without
+-- login. Contains customer PII (name), so — same pattern as bookings/Open
+-- Play — anon gets no direct SELECT/INSERT: all customer interaction goes
+-- through place_mini_mart_order()/get_mini_mart_order_status() below.
+-- ---------------------------------------------------------------------------
+create sequence if not exists mini_mart_order_number_seq start 1000;
+
+create table if not exists mini_mart_orders (
+  id uuid primary key default gen_random_uuid(),
+  order_number text not null unique,
+  customer_name text not null,
+  court_location text not null,
+  notes text,
+  status text not null default 'new' check (status in ('new', 'preparing', 'ready', 'completed', 'cancelled')),
+  total numeric(10, 2) not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists mini_mart_orders_status_idx on mini_mart_orders (status);
+create index if not exists mini_mart_orders_created_at_idx on mini_mart_orders (created_at desc);
+
+create or replace function set_mini_mart_order_number() returns trigger as $$
+begin
+  if new.order_number is null or new.order_number = '' then
+    new.order_number := 'PY-' || nextval('mini_mart_order_number_seq');
+  end if;
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_set_mini_mart_order_number on mini_mart_orders;
+create trigger trg_set_mini_mart_order_number
+  before insert on mini_mart_orders
+  for each row execute function set_mini_mart_order_number();
+
+create or replace function touch_mini_mart_order_updated_at() returns trigger as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_touch_mini_mart_order on mini_mart_orders;
+create trigger trg_touch_mini_mart_order
+  before update on mini_mart_orders
+  for each row execute function touch_mini_mart_order_updated_at();
+
+create table if not exists mini_mart_order_items (
+  id uuid primary key default gen_random_uuid(),
+  order_id uuid not null references mini_mart_orders (id) on delete cascade,
+  item_id uuid references mini_mart_items (id) on delete set null,
+  item_name text not null,
+  quantity integer not null check (quantity > 0),
+  unit_price numeric(10, 2) not null,
+  subtotal numeric(10, 2) not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists mini_mart_order_items_order_idx on mini_mart_order_items (order_id);
+
+-- ---------------------------------------------------------------------------
+-- place_mini_mart_order — the only way a customer places an order.
+-- SECURITY DEFINER so it can insert the order + line items without the
+-- caller needing any direct table privilege. Prices are looked up from
+-- mini_mart_items here, never trusted from the client, so a tampered
+-- request can't produce a discounted or free order — same principle as
+-- create_booking's pricing trigger.
+-- p_items shape: [{"item_id": "<uuid>", "quantity": 2}, ...]
+-- ---------------------------------------------------------------------------
+create or replace function place_mini_mart_order(
+  p_customer_name text,
+  p_court_location text,
+  p_notes text,
+  p_items jsonb
+)
+returns table (
+  success boolean,
+  reason text,
+  order_id uuid,
+  order_number text,
+  total numeric,
+  status text
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  new_order_id uuid;
+  new_order_number text;
+  computed_total numeric := 0;
+  line jsonb;
+  prod record;
+  qty integer;
+  line_subtotal numeric;
+begin
+  if p_customer_name is null or length(trim(p_customer_name)) = 0 then
+    return query select false, 'Customer name is required.', null::uuid, null::text, 0::numeric, null::text;
+    return;
+  end if;
+  if p_court_location is null or length(trim(p_court_location)) = 0 then
+    return query select false, 'Court / location is required.', null::uuid, null::text, 0::numeric, null::text;
+    return;
+  end if;
+  if p_items is null or jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) = 0 then
+    return query select false, 'Your cart is empty.', null::uuid, null::text, 0::numeric, null::text;
+    return;
+  end if;
+
+  -- Validate every line and compute the authoritative total *before*
+  -- inserting anything, so a bad line can't leave a partial order behind.
+  for line in select * from jsonb_array_elements(p_items) loop
+    qty := (line->>'quantity')::integer;
+    if qty is null or qty <= 0 then
+      return query select false, 'Invalid item quantity.', null::uuid, null::text, 0::numeric, null::text;
+      return;
+    end if;
+
+    select * into prod from mini_mart_items where id = (line->>'item_id')::uuid;
+    if not found then
+      return query select false, 'One of the items in your cart is no longer available.', null::uuid, null::text, 0::numeric, null::text;
+      return;
+    end if;
+    if not prod.is_available then
+      return query select false, format('%s is sold out.', prod.name), null::uuid, null::text, 0::numeric, null::text;
+      return;
+    end if;
+
+    computed_total := computed_total + (prod.price * qty);
+  end loop;
+
+  insert into mini_mart_orders (customer_name, court_location, notes, status, total)
+  values (trim(p_customer_name), trim(p_court_location), nullif(trim(coalesce(p_notes, '')), ''), 'new', computed_total)
+  returning id, order_number into new_order_id, new_order_number;
+
+  for line in select * from jsonb_array_elements(p_items) loop
+    qty := (line->>'quantity')::integer;
+    select * into prod from mini_mart_items where id = (line->>'item_id')::uuid;
+    line_subtotal := prod.price * qty;
+    insert into mini_mart_order_items (order_id, item_id, item_name, quantity, unit_price, subtotal)
+    values (new_order_id, prod.id, prod.name, qty, prod.price, line_subtotal);
+  end loop;
+
+  return query select true, null::text, new_order_id, new_order_number, computed_total, 'new'::text;
+end;
+$$;
+
+revoke all on function place_mini_mart_order(text, text, text, jsonb) from public;
+grant execute on function place_mini_mart_order(text, text, text, jsonb) to anon, authenticated;
+
+-- Narrow, PII-free status lookup for "View Order Status" — a customer who
+-- already has their own order number can check it, but this never returns
+-- customer_name/court_location/notes, and there's no way to list orders.
+create or replace function get_mini_mart_order_status(p_order_number text)
+returns table (order_number text, status text, total numeric)
+language sql
+security definer
+set search_path = public
+as $$
+  select order_number, status, total from mini_mart_orders where order_number = trim(p_order_number);
+$$;
+
+revoke all on function get_mini_mart_order_status(text) from public;
+grant execute on function get_mini_mart_order_status(text) to anon, authenticated;
+
+alter table mini_mart_orders enable row level security;
+alter table mini_mart_order_items enable row level security;
+
+-- No SELECT/INSERT policy for anon at all on either table — every customer
+-- interaction goes through the two SECURITY DEFINER functions above.
+drop policy if exists "admins can view mini mart orders" on mini_mart_orders;
+create policy "admins can view mini mart orders" on mini_mart_orders
+  for select to authenticated
+  using (true);
+
+drop policy if exists "admins can update mini mart orders" on mini_mart_orders;
+create policy "admins can update mini mart orders" on mini_mart_orders
+  for update to authenticated
+  using (true)
+  with check (true);
+
+drop policy if exists "admins can view mini mart order items" on mini_mart_order_items;
+create policy "admins can view mini mart order items" on mini_mart_order_items
+  for select to authenticated
+  using (true);
+
+grant select, update on mini_mart_orders to authenticated;
+grant select on mini_mart_order_items to authenticated;
+-- Deliberately no grants at all for anon on these two tables.
+
+-- Realtime: let the admin dashboard receive new/updated orders live.
+-- Idempotent — `alter publication ... add table` errors if run twice, so
+-- this only adds it if it isn't already a member.
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'mini_mart_orders'
+  ) then
+    alter publication supabase_realtime add table mini_mart_orders;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------------
 -- Admin access
 -- ---------------------------------------------------------------------------
 -- Create your admin user under Supabase Dashboard → Authentication → Users

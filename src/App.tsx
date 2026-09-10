@@ -15,6 +15,7 @@ import AdminSettings from './pages/admin/AdminSettings'
 import AdminOpenPlay from './pages/admin/AdminOpenPlay'
 import AdminPromoCodes from './pages/admin/AdminPromoCodes'
 import AdminMiniMart from './pages/admin/AdminMiniMart'
+import AdminMiniMartOrders from './pages/admin/AdminMiniMartOrders'
 
 export default function App() {
   return (
@@ -36,6 +37,7 @@ export default function App() {
               <Route path="open-play" element={<AdminOpenPlay />} />
               <Route path="promo-codes" element={<AdminPromoCodes />} />
               <Route path="mini-mart" element={<AdminMiniMart />} />
+              <Route path="mini-mart/orders" element={<AdminMiniMartOrders />} />
               <Route path="settings" element={<AdminSettings />} />
             </Route>
           </Routes>

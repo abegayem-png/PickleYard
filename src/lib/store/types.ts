@@ -16,6 +16,11 @@ import type {
   ActivePromoBanner,
   MiniMartItem,
   MiniMartItemInput,
+  MiniMartOrder,
+  MiniMartOrderStatus,
+  PlaceMiniMartOrderInput,
+  PlaceOrderResult,
+  MiniMartOrderStatusLookup,
 } from '../../types'
 
 /** Lightweight shape used only for availability/pricing checks — no customer PII. */
@@ -86,4 +91,13 @@ export interface DataStore {
   createMiniMartItem(input: MiniMartItemInput): Promise<MiniMartItem>
   updateMiniMartItem(id: string, patch: Partial<MiniMartItemInput>): Promise<MiniMartItem>
   deleteMiniMartItem(id: string): Promise<void>
+
+  /** Trusted order placement — recalculates pricing from mini_mart_items server-side. */
+  placeMiniMartOrder(input: PlaceMiniMartOrderInput): Promise<PlaceOrderResult>
+  /** Narrow, PII-free status check for the customer's own just-placed order. */
+  getMiniMartOrderStatus(orderNumber: string): Promise<MiniMartOrderStatusLookup | null>
+
+  /** Admin: every order (any status), with its line items, newest first. */
+  listMiniMartOrders(): Promise<MiniMartOrder[]>
+  updateMiniMartOrderStatus(id: string, status: MiniMartOrderStatus): Promise<MiniMartOrder>
 }

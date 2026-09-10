@@ -9,6 +9,7 @@ import type {
   PromoCode,
   PromoPreview,
   MiniMartItem,
+  MiniMartOrder,
 } from '../../types'
 import { DEFAULT_SETTINGS } from '../../types'
 import { calculatePrice, generateBookingReference } from '../pricing'
@@ -24,6 +25,15 @@ const KEYS = {
   openPlayRegistrations: 'pkl_open_play_registrations',
   promoCodes: 'pkl_promo_codes',
   miniMartItems: 'pkl_mini_mart_items',
+  miniMartOrders: 'pkl_mini_mart_orders',
+  miniMartOrderSeq: 'pkl_mini_mart_order_seq',
+}
+
+function nextMiniMartOrderNumber(): string {
+  const current = Number(localStorage.getItem(KEYS.miniMartOrderSeq) || '1000')
+  const next = current + 1
+  localStorage.setItem(KEYS.miniMartOrderSeq, String(next))
+  return `PY-${next}`
 }
 
 // Demo-mode-only seed so the Mini Mart page isn't empty on first load. Real
@@ -489,6 +499,75 @@ export const localStore: DataStore = {
       KEYS.miniMartItems,
       items.filter((i) => i.id !== id),
     )
+  },
+
+  async placeMiniMartOrder(input) {
+    if (!input.customerName.trim()) return { success: false, reason: 'Customer name is required.', orderId: null, orderNumber: null, total: 0, status: null }
+    if (!input.courtLocation.trim()) return { success: false, reason: 'Court / location is required.', orderId: null, orderNumber: null, total: 0, status: null }
+    if (input.items.length === 0) return { success: false, reason: 'Your cart is empty.', orderId: null, orderNumber: null, total: 0, status: null }
+
+    const products = read<MiniMartItem[]>(KEYS.miniMartItems, DEFAULT_MINI_MART_ITEMS)
+    const orderId = newId()
+    const now = new Date().toISOString()
+    const orderItems = []
+    let total = 0
+    for (const line of input.items) {
+      const product = products.find((p) => p.id === line.itemId)
+      if (!product) return { success: false, reason: 'One of the items in your cart is no longer available.', orderId: null, orderNumber: null, total: 0, status: null }
+      if (!product.isAvailable) return { success: false, reason: `${product.name} is sold out.`, orderId: null, orderNumber: null, total: 0, status: null }
+      const subtotal = product.price * line.quantity
+      total += subtotal
+      orderItems.push({
+        id: newId(),
+        orderId,
+        itemId: product.id,
+        itemName: product.name,
+        quantity: line.quantity,
+        unitPrice: product.price,
+        subtotal,
+        createdAt: now,
+      })
+    }
+
+    const order: MiniMartOrder = {
+      id: orderId,
+      orderNumber: nextMiniMartOrderNumber(),
+      customerName: input.customerName.trim(),
+      courtLocation: input.courtLocation.trim(),
+      notes: input.notes?.trim() || '',
+      status: 'new',
+      total,
+      items: orderItems,
+      createdAt: now,
+      updatedAt: now,
+    }
+
+    const orders = read<MiniMartOrder[]>(KEYS.miniMartOrders, [])
+    orders.push(order)
+    write(KEYS.miniMartOrders, orders)
+
+    return { success: true, reason: null, orderId: order.id, orderNumber: order.orderNumber, total, status: 'new' }
+  },
+
+  async getMiniMartOrderStatus(orderNumber) {
+    const orders = read<MiniMartOrder[]>(KEYS.miniMartOrders, [])
+    const order = orders.find((o) => o.orderNumber === orderNumber)
+    if (!order) return null
+    return { orderNumber: order.orderNumber, status: order.status, total: order.total }
+  },
+
+  async listMiniMartOrders() {
+    const orders = read<MiniMartOrder[]>(KEYS.miniMartOrders, [])
+    return [...orders].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  },
+
+  async updateMiniMartOrderStatus(id, status) {
+    const orders = read<MiniMartOrder[]>(KEYS.miniMartOrders, [])
+    const idx = orders.findIndex((o) => o.id === id)
+    if (idx === -1) throw new Error('Order not found')
+    orders[idx] = { ...orders[idx], status, updatedAt: new Date().toISOString() }
+    write(KEYS.miniMartOrders, orders)
+    return orders[idx]
   },
 }
 

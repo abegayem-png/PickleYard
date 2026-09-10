@@ -1,5 +1,6 @@
 import { NavLink, Navigate, Outlet } from 'react-router-dom'
 import { useAdminAuth } from '../../context/AdminAuthContext'
+import { MiniMartOrdersProvider, useMiniMartOrdersContext } from '../../context/MiniMartOrdersContext'
 
 const TABS = [
   { to: '/admin', label: 'Overview', end: true },
@@ -9,7 +10,8 @@ const TABS = [
   { to: '/admin/new-booking', label: 'New Booking' },
   { to: '/admin/open-play', label: 'Open Play' },
   { to: '/admin/promo-codes', label: 'Promo Codes' },
-  { to: '/admin/mini-mart', label: 'Mini Mart' },
+  { to: '/admin/mini-mart', label: 'Mini Mart · Products' },
+  { to: '/admin/mini-mart/orders', label: 'Mini Mart · Orders' },
   { to: '/admin/settings', label: 'Settings' },
 ]
 
@@ -24,6 +26,16 @@ export default function AdminLayout() {
   if (!isAuthenticated) return <Navigate to="/admin/login" replace />
 
   return (
+    <MiniMartOrdersProvider>
+      <AdminLayoutShell onLogout={logout} />
+    </MiniMartOrdersProvider>
+  )
+}
+
+function AdminLayoutShell({ onLogout }: { onLogout: () => void }) {
+  const { newOrderCount } = useMiniMartOrdersContext()
+
+  return (
     <div className="min-h-dvh bg-court-950">
       <header className="sticky top-0 z-40 border-b border-white/5 bg-court-950/95 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
@@ -34,7 +46,7 @@ export default function AdminLayout() {
             <span className="font-display text-sm font-bold text-cream">Admin Dashboard</span>
           </div>
           <button
-            onClick={() => logout()}
+            onClick={onLogout}
             className="rounded-lg bg-white/5 px-3 py-2 text-xs font-bold text-cream-dim hover:bg-white/10"
           >
             Log Out
@@ -53,6 +65,11 @@ export default function AdminLayout() {
               }
             >
               {t.label}
+              {t.to === '/admin/mini-mart/orders' && newOrderCount > 0 && (
+                <span className="ml-1.5 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-extrabold text-white">
+                  {newOrderCount}
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>

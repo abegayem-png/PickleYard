@@ -279,3 +279,65 @@ export interface MiniMartItemInput {
   imageUrl: string
   isAvailable: boolean
 }
+
+// ---------------------------------------------------------------------------
+// Mini Mart orders — placed by customers (no login), managed by admins.
+// Pricing is always looked up server-side from mini_mart_items at order time,
+// never trusted from the client, same principle as booking totals.
+// ---------------------------------------------------------------------------
+export type MiniMartOrderStatus = 'new' | 'preparing' | 'ready' | 'completed' | 'cancelled'
+
+export const MINI_MART_LOCATIONS = ['Court 1', 'Waiting Area', 'Mini Mart Pickup', 'Other'] as const
+
+export interface MiniMartOrderItem {
+  id: string
+  orderId: string
+  itemId: string | null
+  itemName: string
+  quantity: number
+  unitPrice: number
+  subtotal: number
+  createdAt: string
+}
+
+export interface MiniMartOrder {
+  id: string
+  orderNumber: string
+  customerName: string
+  courtLocation: string
+  notes: string
+  status: MiniMartOrderStatus
+  total: number
+  items: MiniMartOrderItem[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface MiniMartOrderItemInput {
+  itemId: string
+  quantity: number
+}
+
+export interface PlaceMiniMartOrderInput {
+  customerName: string
+  courtLocation: string
+  notes?: string
+  items: MiniMartOrderItemInput[]
+}
+
+/** Result of placing an order — trusted, server-computed (RPC in production). */
+export interface PlaceOrderResult {
+  success: boolean
+  reason: string | null
+  orderId: string | null
+  orderNumber: string | null
+  total: number
+  status: MiniMartOrderStatus | null
+}
+
+/** Narrow, PII-free status lookup for "View Order Status". */
+export interface MiniMartOrderStatusLookup {
+  orderNumber: string
+  status: MiniMartOrderStatus
+  total: number
+}

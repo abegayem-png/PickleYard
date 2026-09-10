@@ -11,6 +11,8 @@ import type {
   PromoPreview,
   ActivePromoBanner,
   MiniMartItem,
+  MiniMartOrder,
+  MiniMartOrderItem,
 } from '../../types'
 import { DEFAULT_SETTINGS } from '../../types'
 import { supabase } from '../supabaseClient'
@@ -228,6 +230,35 @@ function miniMartItemToRow(input: Partial<import('../../types').MiniMartItemInpu
   if (input.imageUrl !== undefined) row.image_url = input.imageUrl
   if (input.isAvailable !== undefined) row.is_available = input.isAvailable
   return row
+}
+
+function miniMartOrderItemFromRow(row: Record<string, unknown>): MiniMartOrderItem {
+  return {
+    id: row.id as string,
+    orderId: row.order_id as string,
+    itemId: (row.item_id as string) ?? null,
+    itemName: row.item_name as string,
+    quantity: row.quantity as number,
+    unitPrice: Number(row.unit_price),
+    subtotal: Number(row.subtotal),
+    createdAt: row.created_at as string,
+  }
+}
+
+function miniMartOrderFromRow(row: Record<string, unknown>): MiniMartOrder {
+  const itemRows = (row.mini_mart_order_items as Record<string, unknown>[]) ?? []
+  return {
+    id: row.id as string,
+    orderNumber: row.order_number as string,
+    customerName: row.customer_name as string,
+    courtLocation: row.court_location as string,
+    notes: (row.notes as string) ?? '',
+    status: row.status as MiniMartOrder['status'],
+    total: Number(row.total),
+    items: itemRows.map(miniMartOrderItemFromRow),
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+  }
 }
 
 export const supabaseStore: DataStore = {
@@ -615,5 +646,61 @@ export const supabaseStore: DataStore = {
   async deleteMiniMartItem(id) {
     const { error } = await sb().from('mini_mart_items').delete().eq('id', id)
     if (error) throw error
+  },
+
+  async placeMiniMartOrder(input) {
+    // Same reasoning as create_booking/register_open_play: anon has no
+    // SELECT on mini_mart_orders/mini_mart_order_items (order history is
+    // private), so this goes through a SECURITY DEFINER RPC that inserts
+    // internally and re-prices every line from mini_mart_items server-side —
+    // the client's cart quantities are trusted, prices/availability are not.
+    const { data, error } = await sb().rpc('place_mini_mart_order', {
+      p_customer_name: input.customerName,
+      p_court_location: input.courtLocation,
+      p_notes: input.notes ?? null,
+      p_items: input.items.map((i) => ({ item_id: i.itemId, quantity: i.quantity })),
+    })
+    if (error) throw error
+    const row = Array.isArray(data) ? data[0] : data
+    return {
+      success: Boolean(row?.success),
+      reason: (row?.reason as string) ?? null,
+      orderId: (row?.order_id as string) ?? null,
+      orderNumber: (row?.order_number as string) ?? null,
+      total: Number(row?.total ?? 0),
+      status: (row?.status as MiniMartOrder['status']) ?? null,
+    }
+  },
+
+  async getMiniMartOrderStatus(orderNumber) {
+    const { data, error } = await sb().rpc('get_mini_mart_order_status', { p_order_number: orderNumber })
+    if (error) throw error
+    const row = Array.isArray(data) ? data[0] : data
+    if (!row) return null
+    return {
+      orderNumber: row.order_number as string,
+      status: row.status as MiniMartOrder['status'],
+      total: Number(row.total),
+    }
+  },
+
+  async listMiniMartOrders() {
+    const { data, error } = await sb()
+      .from('mini_mart_orders')
+      .select('*, mini_mart_order_items(*)')
+      .order('created_at', { ascending: false })
+    if (error) throw error
+    return (data ?? []).map(miniMartOrderFromRow)
+  },
+
+  async updateMiniMartOrderStatus(id, status) {
+    const { data, error } = await sb()
+      .from('mini_mart_orders')
+      .update({ status })
+      .eq('id', id)
+      .select('*, mini_mart_order_items(*)')
+      .single()
+    if (error) throw error
+    return miniMartOrderFromRow(data)
   },
 }
