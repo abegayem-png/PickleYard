@@ -503,7 +503,6 @@ export const localStore: DataStore = {
 
   async placeMiniMartOrder(input) {
     if (!input.customerName.trim()) return { success: false, reason: 'Customer name is required.', orderId: null, orderNumber: null, total: 0, status: null }
-    if (!input.courtLocation.trim()) return { success: false, reason: 'Court / location is required.', orderId: null, orderNumber: null, total: 0, status: null }
     if (input.items.length === 0) return { success: false, reason: 'Your cart is empty.', orderId: null, orderNumber: null, total: 0, status: null }
 
     const products = read<MiniMartItem[]>(KEYS.miniMartItems, DEFAULT_MINI_MART_ITEMS)
@@ -533,7 +532,6 @@ export const localStore: DataStore = {
       id: orderId,
       orderNumber: nextMiniMartOrderNumber(),
       customerName: input.customerName.trim(),
-      courtLocation: input.courtLocation.trim(),
       notes: input.notes?.trim() || '',
       status: 'new',
       total,

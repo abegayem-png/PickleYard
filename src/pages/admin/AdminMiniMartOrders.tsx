@@ -54,7 +54,7 @@ export default function AdminMiniMartOrders() {
               <p className="font-display text-xs font-extrabold uppercase tracking-widest text-lime-500">New Mini Mart Order</p>
               <p className="mt-1 font-display text-lg font-extrabold text-cream">Order #{newOrderToast.orderNumber}</p>
               <p className="text-sm text-cream-dim">
-                {newOrderToast.courtLocation} · ₱{newOrderToast.total}
+                {newOrderToast.customerName} · ₱{newOrderToast.total}
               </p>
             </div>
             <button onClick={dismissToast} className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-white/5 text-cream hover:bg-white/10">
@@ -130,14 +130,10 @@ function OrderCard({
         <span className="font-display font-bold text-lime-500">Order #{order.orderNumber}</span>
       </div>
 
-      <div className="mt-2 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+      <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-cream-dim">Customer</p>
           <p className="text-cream">{order.customerName}</p>
-        </div>
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-cream-dim">Location</p>
-          <p className="text-cream">{order.courtLocation}</p>
         </div>
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-cream-dim">Time</p>

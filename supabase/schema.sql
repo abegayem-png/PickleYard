@@ -846,7 +846,9 @@ create table if not exists mini_mart_orders (
   id uuid primary key default gen_random_uuid(),
   order_number text not null unique,
   customer_name text not null,
-  court_location text not null,
+  -- Nullable and unused by the app going forward (checkout no longer asks
+  -- for it) — kept only so any existing rows/data aren't lost.
+  court_location text,
   notes text,
   status text not null default 'new' check (status in ('new', 'preparing', 'ready', 'completed', 'cancelled')),
   total numeric(10, 2) not null,
@@ -904,10 +906,16 @@ create index if not exists mini_mart_order_items_order_idx on mini_mart_order_it
 -- request can't produce a discounted or free order — same principle as
 -- create_booking's pricing trigger.
 -- p_items shape: [{"item_id": "<uuid>", "quantity": 2}, ...]
+--
+-- Checkout no longer collects Court/Location, so this function's signature
+-- dropped that parameter. Postgres treats a different argument list as a
+-- different function, so the old 4-arg version is dropped explicitly rather
+-- than left behind as a second, unused way to place an order.
 -- ---------------------------------------------------------------------------
+drop function if exists place_mini_mart_order(text, text, text, jsonb);
+
 create or replace function place_mini_mart_order(
   p_customer_name text,
-  p_court_location text,
   p_notes text,
   p_items jsonb
 )
@@ -934,10 +942,6 @@ declare
 begin
   if p_customer_name is null or length(trim(p_customer_name)) = 0 then
     return query select false, 'Customer name is required.', null::uuid, null::text, 0::numeric, null::text;
-    return;
-  end if;
-  if p_court_location is null or length(trim(p_court_location)) = 0 then
-    return query select false, 'Court / location is required.', null::uuid, null::text, 0::numeric, null::text;
     return;
   end if;
   if p_items is null or jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) = 0 then
@@ -967,8 +971,8 @@ begin
     computed_total := computed_total + (prod.price * qty);
   end loop;
 
-  insert into mini_mart_orders (customer_name, court_location, notes, status, total)
-  values (trim(p_customer_name), trim(p_court_location), nullif(trim(coalesce(p_notes, '')), ''), 'new', computed_total)
+  insert into mini_mart_orders (customer_name, notes, status, total)
+  values (trim(p_customer_name), nullif(trim(coalesce(p_notes, '')), ''), 'new', computed_total)
   returning id, order_number into new_order_id, new_order_number;
 
   for line in select * from jsonb_array_elements(p_items) loop
@@ -983,12 +987,12 @@ begin
 end;
 $$;
 
-revoke all on function place_mini_mart_order(text, text, text, jsonb) from public;
-grant execute on function place_mini_mart_order(text, text, text, jsonb) to anon, authenticated;
+revoke all on function place_mini_mart_order(text, text, jsonb) from public;
+grant execute on function place_mini_mart_order(text, text, jsonb) to anon, authenticated;
 
 -- Narrow, PII-free status lookup for "View Order Status" — a customer who
 -- already has their own order number can check it, but this never returns
--- customer_name/court_location/notes, and there's no way to list orders.
+-- customer_name/notes, and there's no way to list orders.
 create or replace function get_mini_mart_order_status(p_order_number text)
 returns table (order_number text, status text, total numeric)
 language sql

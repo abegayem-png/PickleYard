@@ -287,8 +287,6 @@ export interface MiniMartItemInput {
 // ---------------------------------------------------------------------------
 export type MiniMartOrderStatus = 'new' | 'preparing' | 'ready' | 'completed' | 'cancelled'
 
-export const MINI_MART_LOCATIONS = ['Court 1', 'Waiting Area', 'Mini Mart Pickup', 'Other'] as const
-
 export interface MiniMartOrderItem {
   id: string
   orderId: string
@@ -304,7 +302,6 @@ export interface MiniMartOrder {
   id: string
   orderNumber: string
   customerName: string
-  courtLocation: string
   notes: string
   status: MiniMartOrderStatus
   total: number
@@ -320,7 +317,6 @@ export interface MiniMartOrderItemInput {
 
 export interface PlaceMiniMartOrderInput {
   customerName: string
-  courtLocation: string
   notes?: string
   items: MiniMartOrderItemInput[]
 }

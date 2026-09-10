@@ -251,7 +251,6 @@ function miniMartOrderFromRow(row: Record<string, unknown>): MiniMartOrder {
     id: row.id as string,
     orderNumber: row.order_number as string,
     customerName: row.customer_name as string,
-    courtLocation: row.court_location as string,
     notes: (row.notes as string) ?? '',
     status: row.status as MiniMartOrder['status'],
     total: Number(row.total),
@@ -656,7 +655,6 @@ export const supabaseStore: DataStore = {
     // the client's cart quantities are trusted, prices/availability are not.
     const { data, error } = await sb().rpc('place_mini_mart_order', {
       p_customer_name: input.customerName,
-      p_court_location: input.courtLocation,
       p_notes: input.notes ?? null,
       p_items: input.items.map((i) => ({ item_id: i.itemId, quantity: i.quantity })),
     })

@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { store } from '../../lib/store'
 import { getErrorMessage } from '../../lib/errors'
-import { MINI_MART_LOCATIONS } from '../../types'
 import type { MiniMartItem, PlaceOrderResult } from '../../types'
 import Button from '../ui/Button'
 
@@ -22,23 +21,15 @@ export default function OrderSummaryModal({
   onNewOrder: () => void
 }) {
   const [customerName, setCustomerName] = useState('')
-  const [location, setLocation] = useState('')
-  const [customLocation, setCustomLocation] = useState('')
   const [notes, setNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [placed, setPlaced] = useState<PlaceOrderResult | null>(null)
   const [checkingStatus, setCheckingStatus] = useState(false)
 
-  const resolvedLocation = location === 'Other' ? customLocation.trim() : location
-
   async function handlePlaceOrder() {
     if (!customerName.trim()) {
       setError('Enter your name.')
-      return
-    }
-    if (!resolvedLocation) {
-      setError('Select where to bring your order.')
       return
     }
     setSubmitting(true)
@@ -46,7 +37,6 @@ export default function OrderSummaryModal({
     try {
       const result = await store.placeMiniMartOrder({
         customerName: customerName.trim(),
-        courtLocation: resolvedLocation,
         notes: notes.trim() || undefined,
         items: lines.map((l) => ({ itemId: l.item.id, quantity: l.quantity })),
       })
@@ -97,9 +87,6 @@ export default function OrderSummaryModal({
             </div>
 
             <p className="mt-4 text-sm text-cream-dim">Please wait while we prepare your order.</p>
-            {resolvedLocation === 'Mini Mart Pickup' && (
-              <p className="mt-1 text-sm text-cream-dim">Show this screen at the counter to collect your order.</p>
-            )}
 
             <Button fullWidth size="lg" className="mt-5" onClick={onNewOrder}>
               Start New Order
@@ -151,38 +138,12 @@ export default function OrderSummaryModal({
               </label>
 
               <label className="block">
-                <span className="mb-1.5 block text-sm font-semibold text-cream-dim">Court / Location</span>
-                <select
-                  value={location}
-                  onChange={(e) => setLocation(e.target.value)}
-                  className="h-12 w-full rounded-xl border border-white/10 bg-court-800 px-3 text-base text-cream focus:border-lime-500/50 focus:outline-none"
-                >
-                  <option value="">Select…</option>
-                  {MINI_MART_LOCATIONS.map((loc) => (
-                    <option key={loc} value={loc}>
-                      {loc}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              {location === 'Other' && (
-                <input
-                  type="text"
-                  value={customLocation}
-                  onChange={(e) => setCustomLocation(e.target.value)}
-                  placeholder="Where should we bring it?"
-                  className="h-12 w-full rounded-xl border border-white/10 bg-court-800 px-3 text-base text-cream placeholder:text-cream-dim/50 focus:border-lime-500/50 focus:outline-none"
-                />
-              )}
-
-              <label className="block">
                 <span className="mb-1.5 block text-sm font-semibold text-cream-dim">Notes (optional)</span>
                 <textarea
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   rows={2}
-                  placeholder="No ice, please bring it to the court…"
+                  placeholder="Add a note…"
                   className="w-full resize-none rounded-xl border border-white/10 bg-court-800 px-3 py-2 text-sm text-cream placeholder:text-cream-dim/50 focus:border-lime-500/50 focus:outline-none"
                 />
               </label>
