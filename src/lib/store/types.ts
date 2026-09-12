@@ -91,6 +91,9 @@ export interface DataStore {
   createMiniMartItem(input: MiniMartItemInput): Promise<MiniMartItem>
   updateMiniMartItem(id: string, patch: Partial<MiniMartItemInput>): Promise<MiniMartItem>
   deleteMiniMartItem(id: string): Promise<void>
+  /** Atomic relative stock change (clamped at 0) — safe against stale reads,
+   *  used by the admin's quick +1/+5/-1/-5 buttons. */
+  adjustMiniMartItemStock(id: string, delta: number): Promise<MiniMartItem>
 
   /** Trusted order placement — recalculates pricing from mini_mart_items server-side. */
   placeMiniMartOrder(input: PlaceMiniMartOrderInput): Promise<PlaceOrderResult>

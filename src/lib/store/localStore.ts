@@ -10,6 +10,7 @@ import type {
   PromoPreview,
   MiniMartItem,
   MiniMartOrder,
+  MiniMartOrderItem,
 } from '../../types'
 import { DEFAULT_SETTINGS } from '../../types'
 import { calculatePrice, generateBookingReference } from '../pricing'
@@ -47,6 +48,7 @@ const DEFAULT_MINI_MART_ITEMS: MiniMartItem[] = [
     category: 'drinks',
     imageUrl: '',
     isAvailable: true,
+    stockQuantity: 24,
     createdAt: new Date(0).toISOString(),
     updatedAt: new Date(0).toISOString(),
   },
@@ -58,6 +60,7 @@ const DEFAULT_MINI_MART_ITEMS: MiniMartItem[] = [
     category: 'food',
     imageUrl: '',
     isAvailable: true,
+    stockQuantity: 12,
     createdAt: new Date(0).toISOString(),
     updatedAt: new Date(0).toISOString(),
   },
@@ -69,6 +72,7 @@ const DEFAULT_MINI_MART_ITEMS: MiniMartItem[] = [
     category: 'drinks',
     imageUrl: '',
     isAvailable: true,
+    stockQuantity: 30,
     createdAt: new Date(0).toISOString(),
     updatedAt: new Date(0).toISOString(),
   },
@@ -501,6 +505,19 @@ export const localStore: DataStore = {
     )
   },
 
+  async adjustMiniMartItemStock(id, delta) {
+    const items = read<MiniMartItem[]>(KEYS.miniMartItems, DEFAULT_MINI_MART_ITEMS)
+    const idx = items.findIndex((i) => i.id === id)
+    if (idx === -1) throw new Error('Mini Mart item not found')
+    items[idx] = {
+      ...items[idx],
+      stockQuantity: Math.max(0, items[idx].stockQuantity + delta),
+      updatedAt: new Date().toISOString(),
+    }
+    write(KEYS.miniMartItems, items)
+    return items[idx]
+  },
+
   async placeMiniMartOrder(input) {
     if (!input.customerName.trim()) return { success: false, reason: 'Customer name is required.', orderId: null, orderNumber: null, total: 0, status: null }
     if (input.items.length === 0) return { success: false, reason: 'Your cart is empty.', orderId: null, orderNumber: null, total: 0, status: null }
@@ -508,12 +525,24 @@ export const localStore: DataStore = {
     const products = read<MiniMartItem[]>(KEYS.miniMartItems, DEFAULT_MINI_MART_ITEMS)
     const orderId = newId()
     const now = new Date().toISOString()
-    const orderItems = []
+    const orderItems: MiniMartOrderItem[] = []
     let total = 0
+
+    // Validate every line (including stock) before writing anything.
     for (const line of input.items) {
       const product = products.find((p) => p.id === line.itemId)
       if (!product) return { success: false, reason: 'One of the items in your cart is no longer available.', orderId: null, orderNumber: null, total: 0, status: null }
       if (!product.isAvailable) return { success: false, reason: `${product.name} is sold out.`, orderId: null, orderNumber: null, total: 0, status: null }
+      if (product.stockQuantity < line.quantity) {
+        return {
+          success: false,
+          reason: `Only ${product.stockQuantity} ${product.name} left in stock.`,
+          orderId: null,
+          orderNumber: null,
+          total: 0,
+          status: null,
+        }
+      }
       const subtotal = product.price * line.quantity
       total += subtotal
       orderItems.push({
@@ -544,6 +573,13 @@ export const localStore: DataStore = {
     orders.push(order)
     write(KEYS.miniMartOrders, orders)
 
+    // Only deduct stock after the order itself has been successfully created.
+    const updatedProducts = products.map((p) => {
+      const line = orderItems.find((oi) => oi.itemId === p.id)
+      return line ? { ...p, stockQuantity: p.stockQuantity - line.quantity, updatedAt: now } : p
+    })
+    write(KEYS.miniMartItems, updatedProducts)
+
     return { success: true, reason: null, orderId: order.id, orderNumber: order.orderNumber, total, status: 'new' }
   },
 
@@ -563,6 +599,19 @@ export const localStore: DataStore = {
     const orders = read<MiniMartOrder[]>(KEYS.miniMartOrders, [])
     const idx = orders.findIndex((o) => o.id === id)
     if (idx === -1) throw new Error('Order not found')
+    const previousStatus = orders[idx].status
+
+    // Restore stock exactly once: only on the actual transition into
+    // 'cancelled', never if it's already cancelled (or already completed).
+    if (status === 'cancelled' && previousStatus !== 'cancelled' && previousStatus !== 'completed') {
+      const products = read<MiniMartItem[]>(KEYS.miniMartItems, DEFAULT_MINI_MART_ITEMS)
+      const restored = products.map((p) => {
+        const line = orders[idx].items.find((oi) => oi.itemId === p.id)
+        return line ? { ...p, stockQuantity: p.stockQuantity + line.quantity, updatedAt: new Date().toISOString() } : p
+      })
+      write(KEYS.miniMartItems, restored)
+    }
+
     orders[idx] = { ...orders[idx], status, updatedAt: new Date().toISOString() }
     write(KEYS.miniMartOrders, orders)
     return orders[idx]

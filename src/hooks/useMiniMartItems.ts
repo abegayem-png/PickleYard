@@ -40,5 +40,13 @@ export function useMiniMartItems() {
     [refresh],
   )
 
-  return { items, loading, refresh, createItem, updateItem, deleteItem }
+  const adjustStock = useCallback(
+    async (id: string, delta: number) => {
+      await store.adjustMiniMartItemStock(id, delta)
+      await refresh()
+    },
+    [refresh],
+  )
+
+  return { items, loading, refresh, createItem, updateItem, deleteItem, adjustStock }
 }

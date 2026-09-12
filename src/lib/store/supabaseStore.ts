@@ -216,6 +216,7 @@ function miniMartItemFromRow(row: Record<string, unknown>): MiniMartItem {
     category: row.category as MiniMartItem['category'],
     imageUrl: (row.image_url as string) ?? '',
     isAvailable: Boolean(row.is_available),
+    stockQuantity: Number(row.stock_quantity ?? 0),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -229,6 +230,7 @@ function miniMartItemToRow(input: Partial<import('../../types').MiniMartItemInpu
   if (input.category !== undefined) row.category = input.category
   if (input.imageUrl !== undefined) row.image_url = input.imageUrl
   if (input.isAvailable !== undefined) row.is_available = input.isAvailable
+  if (input.stockQuantity !== undefined) row.stock_quantity = input.stockQuantity
   return row
 }
 
@@ -645,6 +647,18 @@ export const supabaseStore: DataStore = {
   async deleteMiniMartItem(id) {
     const { error } = await sb().from('mini_mart_items').delete().eq('id', id)
     if (error) throw error
+  },
+
+  async adjustMiniMartItemStock(id, delta) {
+    // Atomic relative update on the DB side (`stock_quantity + delta`, clamped
+    // at 0) rather than read-then-write from a possibly-stale client value —
+    // safe even if stock changed (e.g. a customer order) since this was last
+    // fetched.
+    const { error: rpcError } = await sb().rpc('adjust_mini_mart_stock', { p_item_id: id, p_delta: delta })
+    if (rpcError) throw rpcError
+    const { data, error } = await sb().from('mini_mart_items').select('*').eq('id', id).single()
+    if (error) throw error
+    return miniMartItemFromRow(data)
   },
 
   async placeMiniMartOrder(input) {

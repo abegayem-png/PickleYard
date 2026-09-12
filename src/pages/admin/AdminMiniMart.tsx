@@ -3,6 +3,7 @@ import { useMiniMartItems } from '../../hooks/useMiniMartItems'
 import { uploadMiniMartImage } from '../../lib/miniMartStorage'
 import { isSupabaseConfigured } from '../../lib/supabaseClient'
 import { getErrorMessage } from '../../lib/errors'
+import { isEffectivelyAvailable, isLowStock } from '../../lib/miniMartStock'
 import { MINI_MART_CATEGORIES, MINI_MART_CATEGORY_LABELS } from '../../types'
 import type { MiniMartCategory, MiniMartItem, MiniMartItemInput } from '../../types'
 import Badge from '../../components/ui/Badge'
@@ -17,11 +18,14 @@ const EMPTY_FORM: MiniMartItemInput = {
   category: 'food',
   imageUrl: '',
   isAvailable: true,
+  stockQuantity: 0,
 }
 
 export default function AdminMiniMart() {
   const mart = useMiniMartItems()
   const [creating, setCreating] = useState(false)
+
+  const lowStockItems = mart.items.filter(isLowStock)
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -34,6 +38,19 @@ export default function AdminMiniMart() {
           {creating ? 'Close' : '+ New Product'}
         </Button>
       </div>
+
+      {lowStockItems.length > 0 && (
+        <Card className="mb-4 border-amber-400/30 bg-amber-400/5 p-4">
+          <p className="font-display text-xs font-extrabold uppercase tracking-widest text-amber-400">Low Stock</p>
+          <div className="mt-2 space-y-1">
+            {lowStockItems.map((i) => (
+              <p key={i.id} className="text-sm text-cream">
+                {i.name} — {i.stockQuantity} left
+              </p>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {creating && (
         <Card className="mb-4 p-5">
@@ -56,7 +73,7 @@ export default function AdminMiniMart() {
       ) : (
         <div className="space-y-3">
           {mart.items.map((item) => (
-            <ProductRow key={item.id} item={item} onUpdate={mart.updateItem} onDelete={mart.deleteItem} />
+            <ProductRow key={item.id} item={item} onUpdate={mart.updateItem} onDelete={mart.deleteItem} onAdjustStock={mart.adjustStock} />
           ))}
         </div>
       )}
@@ -68,13 +85,21 @@ function ProductRow({
   item,
   onUpdate,
   onDelete,
+  onAdjustStock,
 }: {
   item: MiniMartItem
   onUpdate: (id: string, patch: Partial<MiniMartItemInput>) => Promise<void>
   onDelete: (id: string) => Promise<void>
+  onAdjustStock: (id: string, delta: number) => Promise<void>
 }) {
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [adjusting, setAdjusting] = useState<number | null>(null)
+  const [setStockValue, setSetStockValue] = useState(String(item.stockQuantity))
+  const [stockError, setStockError] = useState<string | null>(null)
+
+  const available = isEffectivelyAvailable(item)
+  const lowStock = isLowStock(item)
 
   async function handleDelete() {
     if (!confirm(`Delete "${item.name}"? This cannot be undone.`)) return
@@ -83,6 +108,35 @@ function ProductRow({
       await onDelete(item.id)
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function handleAdjust(delta: number) {
+    setAdjusting(delta)
+    setStockError(null)
+    try {
+      await onAdjustStock(item.id, delta)
+    } catch (err) {
+      setStockError(getErrorMessage(err, 'Failed to adjust stock.'))
+    } finally {
+      setAdjusting(null)
+    }
+  }
+
+  async function handleSetStock() {
+    const value = Number(setStockValue)
+    if (!Number.isFinite(value) || value < 0 || !Number.isInteger(value)) {
+      setStockError('Enter a whole number, 0 or more.')
+      return
+    }
+    setAdjusting(-1)
+    setStockError(null)
+    try {
+      await onUpdate(item.id, { stockQuantity: value })
+    } catch (err) {
+      setStockError(getErrorMessage(err, 'Failed to update stock.'))
+    } finally {
+      setAdjusting(null)
     }
   }
 
@@ -100,10 +154,11 @@ function ProductRow({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <p className="truncate font-display font-bold text-cream">{item.name}</p>
-              <Badge tone={item.isAvailable ? 'confirmed' : 'blocked'}>{item.isAvailable ? 'Available' : 'Sold Out'}</Badge>
+              <Badge tone={available ? 'confirmed' : 'blocked'}>{available ? 'Available' : 'Sold Out'}</Badge>
+              {lowStock && <Badge tone="pending">Low Stock</Badge>}
             </div>
             <p className="text-sm text-cream-dim">
-              ₱{item.price} · {MINI_MART_CATEGORY_LABELS[item.category]}
+              ₱{item.price} · {MINI_MART_CATEGORY_LABELS[item.category]} · Stock: {item.stockQuantity}
             </p>
           </div>
         </div>
@@ -131,6 +186,58 @@ function ProductRow({
         </div>
       </div>
 
+      <div className="mt-4 border-t border-white/10 pt-4">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-cream-dim">Stock: {item.stockQuantity}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => handleAdjust(-5)}
+            disabled={adjusting !== null || item.stockQuantity === 0}
+            className="rounded-lg bg-white/5 px-3 py-1.5 text-sm font-bold text-cream hover:bg-white/10 disabled:opacity-30"
+          >
+            −5
+          </button>
+          <button
+            onClick={() => handleAdjust(-1)}
+            disabled={adjusting !== null || item.stockQuantity === 0}
+            className="rounded-lg bg-white/5 px-3 py-1.5 text-sm font-bold text-cream hover:bg-white/10 disabled:opacity-30"
+          >
+            −1
+          </button>
+          <button
+            onClick={() => handleAdjust(1)}
+            disabled={adjusting !== null}
+            className="rounded-lg bg-lime-500/10 px-3 py-1.5 text-sm font-bold text-lime-400 hover:bg-lime-500/20"
+          >
+            +1
+          </button>
+          <button
+            onClick={() => handleAdjust(5)}
+            disabled={adjusting !== null}
+            className="rounded-lg bg-lime-500/10 px-3 py-1.5 text-sm font-bold text-lime-400 hover:bg-lime-500/20"
+          >
+            +5
+          </button>
+
+          <div className="ml-2 flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              value={setStockValue}
+              onChange={(e) => setSetStockValue(e.target.value)}
+              className="h-9 w-20 rounded-lg border border-white/10 bg-court-800 px-2 text-sm text-cream focus:border-lime-500/50 focus:outline-none"
+            />
+            <button
+              onClick={handleSetStock}
+              disabled={adjusting !== null}
+              className="rounded-lg bg-white/5 px-3 py-1.5 text-sm font-bold text-cream hover:bg-white/10"
+            >
+              Set Stock
+            </button>
+          </div>
+        </div>
+        {stockError && <p className="mt-2 text-xs text-red-400">{stockError}</p>}
+      </div>
+
       {editing && (
         <div className="mt-4 border-t border-white/10 pt-4">
           <ProductForm
@@ -141,6 +248,7 @@ function ProductRow({
               category: item.category,
               imageUrl: item.imageUrl,
               isAvailable: item.isAvailable,
+              stockQuantity: item.stockQuantity,
             }}
             onSubmit={async (input) => {
               await onUpdate(item.id, input)
@@ -198,6 +306,10 @@ function ProductForm({
       setError('Price cannot be negative.')
       return
     }
+    if (!Number.isInteger(form.stockQuantity) || form.stockQuantity < 0) {
+      setError('Stock quantity must be a whole number, 0 or more.')
+      return
+    }
     setBusy(true)
     setError(null)
     try {
@@ -240,6 +352,8 @@ function ProductForm({
           </select>
         </label>
       </div>
+
+      <NumberField label="Stock Quantity" value={form.stockQuantity} onChange={(v) => set('stockQuantity', Math.trunc(v))} />
 
       <div>
         <span className="mb-1.5 block text-sm font-semibold text-cream-dim">Product Photo</span>

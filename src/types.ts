@@ -267,6 +267,8 @@ export interface MiniMartItem {
   category: MiniMartCategory
   imageUrl: string
   isAvailable: boolean
+  /** Whole units on hand. 0 means sold out regardless of isAvailable. */
+  stockQuantity: number
   createdAt: string
   updatedAt: string
 }
@@ -278,6 +280,7 @@ export interface MiniMartItemInput {
   category: MiniMartCategory
   imageUrl: string
   isAvailable: boolean
+  stockQuantity: number
 }
 
 // ---------------------------------------------------------------------------

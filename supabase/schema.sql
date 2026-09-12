@@ -778,9 +778,19 @@ create table if not exists mini_mart_items (
   category text not null check (category in ('food', 'snacks', 'drinks', 'court_essentials')),
   image_url text not null default '',
   is_available boolean not null default true,
+  stock_quantity integer not null default 0 check (stock_quantity >= 0),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Defensive guard in case this table already existed from an earlier,
+-- partial version of this script — safe no-op if the column is present.
+alter table mini_mart_items add column if not exists stock_quantity integer not null default 0;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'mini_mart_items_stock_quantity_check') then
+    alter table mini_mart_items add constraint mini_mart_items_stock_quantity_check check (stock_quantity >= 0);
+  end if;
+end $$;
 
 create index if not exists mini_mart_items_category_idx on mini_mart_items (category);
 
@@ -813,6 +823,26 @@ create policy "admins can manage mini mart items" on mini_mart_items
 
 grant select on mini_mart_items to anon;
 grant select, insert, update, delete on mini_mart_items to authenticated;
+
+-- Atomic relative stock adjustment for the admin's quick +1/+5/-1/-5
+-- buttons — updates `stock_quantity + p_delta` directly on the row rather
+-- than the client reading a value and writing it back, so it can't clobber
+-- a concurrent change (e.g. a customer order landing between the admin's
+-- last fetch and their click). Clamped at 0. Admin-only.
+create or replace function adjust_mini_mart_stock(p_item_id uuid, p_delta integer)
+returns integer
+language sql
+security definer
+set search_path = public
+as $$
+  update mini_mart_items
+  set stock_quantity = greatest(0, stock_quantity + p_delta)
+  where id = p_item_id
+  returning stock_quantity;
+$$;
+
+revoke all on function adjust_mini_mart_stock(uuid, integer) from public;
+grant execute on function adjust_mini_mart_stock(uuid, integer) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Storage bucket for product photos. Public read (photos are shown on the
@@ -898,13 +928,43 @@ create table if not exists mini_mart_order_items (
 
 create index if not exists mini_mart_order_items_order_idx on mini_mart_order_items (order_id);
 
+-- Returns an order's items to stock exactly once, the moment its status
+-- actually transitions into 'cancelled'. The WHEN clause is what guarantees
+-- "only once": it only fires on the transition itself, not if the order is
+-- already cancelled (updating some other field, or a repeat cancel attempt)
+-- and not if it was already 'completed' (no cancel path exists for that in
+-- the app, but this guards the database itself rather than trusting the
+-- client not to try).
+create or replace function restore_mini_mart_order_stock() returns trigger as $$
+begin
+  update mini_mart_items m
+  set stock_quantity = m.stock_quantity + oi.quantity
+  from mini_mart_order_items oi
+  where oi.order_id = new.id
+    and oi.item_id = m.id;
+  return new;
+end;
+$$ language plpgsql security definer set search_path = public;
+
+drop trigger if exists trg_restore_mini_mart_order_stock on mini_mart_orders;
+create trigger trg_restore_mini_mart_order_stock
+  after update on mini_mart_orders
+  for each row
+  when (old.status is distinct from 'cancelled' and old.status is distinct from 'completed' and new.status = 'cancelled')
+  execute function restore_mini_mart_order_stock();
+
 -- ---------------------------------------------------------------------------
 -- place_mini_mart_order — the only way a customer places an order.
 -- SECURITY DEFINER so it can insert the order + line items without the
 -- caller needing any direct table privilege. Prices are looked up from
 -- mini_mart_items here, never trusted from the client, so a tampered
 -- request can't produce a discounted or free order — same principle as
--- create_booking's pricing trigger.
+-- create_booking's pricing trigger. Stock is checked and deducted here too,
+-- with each product row locked (FOR UPDATE) during validation so two
+-- concurrent orders can't both buy the last unit — the second transaction
+-- blocks on the lock until the first commits or rolls back, then re-reads
+-- the up-to-date stock_quantity. Stock is only deducted after the order
+-- itself has been inserted, inside the same transaction as everything else.
 -- p_items shape: [{"item_id": "<uuid>", "quantity": 2}, ...]
 --
 -- Checkout no longer collects Court/Location, so this function's signature
@@ -949,8 +1009,10 @@ begin
     return;
   end if;
 
-  -- Validate every line and compute the authoritative total *before*
-  -- inserting anything, so a bad line can't leave a partial order behind.
+  -- Validate every line (availability + stock) and compute the authoritative
+  -- total *before* inserting anything, so a bad line can't leave a partial
+  -- order behind. FOR UPDATE locks each product row for the rest of this
+  -- transaction.
   for line in select * from jsonb_array_elements(p_items) loop
     qty := (line->>'quantity')::integer;
     if qty is null or qty <= 0 then
@@ -958,13 +1020,17 @@ begin
       return;
     end if;
 
-    select * into prod from mini_mart_items where id = (line->>'item_id')::uuid;
+    select * into prod from mini_mart_items where id = (line->>'item_id')::uuid for update;
     if not found then
       return query select false, 'One of the items in your cart is no longer available.', null::uuid, null::text, 0::numeric, null::text;
       return;
     end if;
     if not prod.is_available then
       return query select false, format('%s is sold out.', prod.name), null::uuid, null::text, 0::numeric, null::text;
+      return;
+    end if;
+    if prod.stock_quantity < qty then
+      return query select false, format('Only %s %s left in stock.', prod.stock_quantity, prod.name), null::uuid, null::text, 0::numeric, null::text;
       return;
     end if;
 
@@ -975,12 +1041,16 @@ begin
   values (trim(p_customer_name), nullif(trim(coalesce(p_notes, '')), ''), 'new', computed_total)
   returning id, order_number into new_order_id, new_order_number;
 
+  -- Only now, after the order itself exists, insert its line items and
+  -- deduct stock — still inside the same transaction as the checks above.
   for line in select * from jsonb_array_elements(p_items) loop
     qty := (line->>'quantity')::integer;
     select * into prod from mini_mart_items where id = (line->>'item_id')::uuid;
     line_subtotal := prod.price * qty;
     insert into mini_mart_order_items (order_id, item_id, item_name, quantity, unit_price, subtotal)
     values (new_order_id, prod.id, prod.name, qty, prod.price, line_subtotal);
+
+    update mini_mart_items set stock_quantity = stock_quantity - qty where id = prod.id;
   end loop;
 
   return query select true, null::text, new_order_id, new_order_number, computed_total, 'new'::text;
