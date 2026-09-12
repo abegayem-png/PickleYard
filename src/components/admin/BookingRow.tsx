@@ -2,7 +2,9 @@ import { useState } from 'react'
 import Badge from '../ui/Badge'
 import Button from '../ui/Button'
 import Card from '../ui/Card'
+import PaymentProofImage from './PaymentProofImage'
 import { formatDateLong, formatTimeRange12h } from '../../lib/time'
+import { paymentBadgeLabel, paymentBadgeTone } from '../../lib/paymentDisplay'
 import type { Booking } from '../../types'
 
 interface BookingRowProps {
@@ -11,10 +13,21 @@ interface BookingRowProps {
   onCancel: (id: string) => Promise<void>
   onMarkPaid: (id: string) => Promise<void>
   onMarkUnpaid: (id: string) => Promise<void>
+  onVerifyPayment: (id: string) => Promise<void>
+  onRejectPayment: (id: string) => Promise<void>
   onDelete: (id: string) => Promise<void>
 }
 
-export default function BookingRow({ booking, onApprove, onCancel, onMarkPaid, onMarkUnpaid, onDelete }: BookingRowProps) {
+export default function BookingRow({
+  booking,
+  onApprove,
+  onCancel,
+  onMarkPaid,
+  onMarkUnpaid,
+  onVerifyPayment,
+  onRejectPayment,
+  onDelete,
+}: BookingRowProps) {
   const [busy, setBusy] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
 
@@ -34,7 +47,9 @@ export default function BookingRow({ booking, onApprove, onCancel, onMarkPaid, o
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-display font-bold text-lime-500">{booking.bookingReference}</span>
             <Badge tone={booking.status}>{booking.status}</Badge>
-            <Badge tone={booking.paymentStatus}>{booking.paymentStatus}</Badge>
+            <Badge tone={paymentBadgeTone(booking.paymentStatus)}>
+              {paymentBadgeLabel(booking.paymentStatus, booking.paymentMethod)}
+            </Badge>
           </div>
           <p className="mt-1 truncate font-semibold text-cream">{booking.customerName}</p>
           <p className="text-sm text-cream-dim">
@@ -76,31 +91,58 @@ export default function BookingRow({ booking, onApprove, onCancel, onMarkPaid, o
             </p>
           )}
 
+          {booking.paymentMethod === 'gcash' && (
+            <div className="mt-3 rounded-lg bg-white/5 p-3">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-cream-dim">GCash Payment</p>
+              {booking.paymentProofUrl ? (
+                <PaymentProofImage proofRef={booking.paymentProofUrl} />
+              ) : (
+                <p className="text-sm text-cream-dim">Awaiting customer to submit a payment screenshot.</p>
+              )}
+              {booking.paymentStatus === 'pending' && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button size="md" disabled={busy !== null} onClick={() => run('verify', () => onVerifyPayment(booking.id))}>
+                    {busy === 'verify' ? 'Verifying…' : 'Verify Payment'}
+                  </Button>
+                  <Button
+                    size="md"
+                    variant="danger"
+                    disabled={busy !== null}
+                    onClick={() => run('reject', () => onRejectPayment(booking.id))}
+                  >
+                    {busy === 'reject' ? 'Rejecting…' : 'Reject Payment'}
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="mt-4 flex flex-wrap gap-2">
             {booking.status === 'pending' && (
               <Button size="md" disabled={busy !== null} onClick={() => run('approve', () => onApprove(booking.id))}>
                 {busy === 'approve' ? 'Approving…' : 'Approve'}
               </Button>
             )}
-            {booking.paymentStatus === 'unpaid' ? (
-              <Button
-                size="md"
-                variant="secondary"
-                disabled={busy !== null}
-                onClick={() => run('paid', () => onMarkPaid(booking.id))}
-              >
-                {busy === 'paid' ? 'Updating…' : 'Mark as Paid'}
-              </Button>
-            ) : (
-              <Button
-                size="md"
-                variant="secondary"
-                disabled={busy !== null}
-                onClick={() => run('unpaid', () => onMarkUnpaid(booking.id))}
-              >
-                Mark as Unpaid
-              </Button>
-            )}
+            {booking.paymentMethod === 'cash' &&
+              (booking.paymentStatus !== 'verified' ? (
+                <Button
+                  size="md"
+                  variant="secondary"
+                  disabled={busy !== null}
+                  onClick={() => run('paid', () => onMarkPaid(booking.id))}
+                >
+                  {busy === 'paid' ? 'Updating…' : 'Mark as Paid'}
+                </Button>
+              ) : (
+                <Button
+                  size="md"
+                  variant="secondary"
+                  disabled={busy !== null}
+                  onClick={() => run('unpaid', () => onMarkUnpaid(booking.id))}
+                >
+                  Mark as Unpaid
+                </Button>
+              ))}
             {booking.status !== 'cancelled' && (
               <Button size="md" variant="danger" disabled={busy !== null} onClick={() => run('cancel', () => onCancel(booking.id))}>
                 {busy === 'cancel' ? 'Cancelling…' : 'Cancel Booking'}

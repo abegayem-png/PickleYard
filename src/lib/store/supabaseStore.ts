@@ -46,6 +46,8 @@ function bookingFromRow(row: Record<string, unknown>): Booking {
     status: row.status as BookingStatus,
     paymentStatus: row.payment_status as PaymentStatus,
     paymentMethod: row.payment_method as Booking['paymentMethod'],
+    paymentProofUrl: (row.payment_proof_url as string) ?? null,
+    paymentVerifiedAt: (row.payment_verified_at as string) ?? null,
     notes: (row.notes as string) ?? undefined,
     createdAt: row.created_at as string,
   }
@@ -257,6 +259,10 @@ function miniMartOrderFromRow(row: Record<string, unknown>): MiniMartOrder {
     status: row.status as MiniMartOrder['status'],
     total: Number(row.total),
     items: itemRows.map(miniMartOrderItemFromRow),
+    paymentMethod: (row.payment_method as MiniMartOrder['paymentMethod']) ?? 'cash',
+    paymentStatus: (row.payment_status as PaymentStatus) ?? 'unpaid',
+    paymentProofUrl: (row.payment_proof_url as string) ?? null,
+    paymentVerifiedAt: (row.payment_verified_at as string) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -388,6 +394,34 @@ export const supabaseStore: DataStore = {
       .single()
     if (error) throw error
     return bookingFromRow(data)
+  },
+
+  async submitBookingPaymentProof(bookingId, mobileNumber, proofUrl) {
+    // SECURITY DEFINER RPC: ownership is proven by knowing both the booking id
+    // and its mobile number (same pairing as get_booking_by_reference), not by
+    // any table grant — anon still has no direct read/write on bookings.
+    const { data, error } = await sb().rpc('submit_booking_payment_proof', {
+      p_booking_id: bookingId,
+      p_mobile_number: mobileNumber,
+      p_proof_path: proofUrl,
+    })
+    if (error) throw error
+    const row = Array.isArray(data) ? data[0] : data
+    return { success: Boolean(row?.success), reason: (row?.reason as string) ?? null }
+  },
+
+  async verifyBookingPayment(id) {
+    const { data, error } = await sb().rpc('verify_booking_payment', { p_booking_id: id })
+    if (error) throw error
+    const row = Array.isArray(data) ? data[0] : data
+    return bookingFromRow(row)
+  },
+
+  async rejectBookingPayment(id) {
+    const { data, error } = await sb().rpc('reject_booking_payment', { p_booking_id: id })
+    if (error) throw error
+    const row = Array.isArray(data) ? data[0] : data
+    return bookingFromRow(row)
   },
 
   async cancelBooking(id) {
@@ -671,6 +705,7 @@ export const supabaseStore: DataStore = {
       p_customer_name: input.customerName,
       p_notes: input.notes ?? null,
       p_items: input.items.map((i) => ({ item_id: i.itemId, quantity: i.quantity })),
+      p_payment_method: input.paymentMethod,
     })
     if (error) throw error
     const row = Array.isArray(data) ? data[0] : data
@@ -681,6 +716,7 @@ export const supabaseStore: DataStore = {
       orderNumber: (row?.order_number as string) ?? null,
       total: Number(row?.total ?? 0),
       status: (row?.status as MiniMartOrder['status']) ?? null,
+      paymentStatus: (row?.payment_status as PaymentStatus) ?? null,
     }
   },
 
@@ -693,7 +729,21 @@ export const supabaseStore: DataStore = {
       orderNumber: row.order_number as string,
       status: row.status as MiniMartOrder['status'],
       total: Number(row.total),
+      paymentMethod: (row.payment_method as MiniMartOrder['paymentMethod']) ?? 'cash',
+      paymentStatus: (row.payment_status as PaymentStatus) ?? 'unpaid',
     }
+  },
+
+  async submitMiniMartPaymentProof(orderNumber, proofUrl) {
+    // SECURITY DEFINER RPC keyed by order number alone — same ownership model
+    // as get_mini_mart_order_status (anon has no direct read on the table).
+    const { data, error } = await sb().rpc('submit_mini_mart_payment_proof', {
+      p_order_number: orderNumber,
+      p_proof_path: proofUrl,
+    })
+    if (error) throw error
+    const row = Array.isArray(data) ? data[0] : data
+    return { success: Boolean(row?.success), reason: (row?.reason as string) ?? null }
   },
 
   async listMiniMartOrders() {
@@ -712,6 +762,22 @@ export const supabaseStore: DataStore = {
       .eq('id', id)
       .select('*, mini_mart_order_items(*)')
       .single()
+    if (error) throw error
+    return miniMartOrderFromRow(data)
+  },
+
+  async verifyMiniMartPayment(id) {
+    const { error: rpcError } = await sb().rpc('verify_mini_mart_payment', { p_order_id: id })
+    if (rpcError) throw rpcError
+    const { data, error } = await sb().from('mini_mart_orders').select('*, mini_mart_order_items(*)').eq('id', id).single()
+    if (error) throw error
+    return miniMartOrderFromRow(data)
+  },
+
+  async rejectMiniMartPayment(id) {
+    const { error: rpcError } = await sb().rpc('reject_mini_mart_payment', { p_order_id: id })
+    if (rpcError) throw rpcError
+    const { data, error } = await sb().from('mini_mart_orders').select('*, mini_mart_order_items(*)').eq('id', id).single()
     if (error) throw error
     return miniMartOrderFromRow(data)
   },

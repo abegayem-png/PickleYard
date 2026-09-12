@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMiniMartOrdersContext } from '../../context/MiniMartOrdersContext'
 import { isOrderSoundEnabled, setOrderSoundEnabled, unlockNotificationSound } from '../../lib/notificationSound'
+import { paymentBadgeLabel, paymentBadgeTone } from '../../lib/paymentDisplay'
 import type { MiniMartOrder, MiniMartOrderStatus } from '../../types'
 import Badge from '../../components/ui/Badge'
 import Button from '../../components/ui/Button'
 import Card from '../../components/ui/Card'
+import PaymentProofImage from '../../components/admin/PaymentProofImage'
 
 const TABS: Array<{ label: string; value: MiniMartOrderStatus | 'all' }> = [
+  { label: 'Awaiting Payment', value: 'awaiting_payment' },
   { label: 'New', value: 'new' },
   { label: 'Preparing', value: 'preparing' },
   { label: 'Ready', value: 'ready' },
@@ -15,6 +18,7 @@ const TABS: Array<{ label: string; value: MiniMartOrderStatus | 'all' }> = [
 ]
 
 const STATUS_BADGE_TONE: Record<MiniMartOrderStatus, 'pending' | 'confirmed' | 'paid' | 'cancelled'> = {
+  awaiting_payment: 'pending',
   new: 'pending',
   preparing: 'confirmed',
   ready: 'confirmed',
@@ -23,7 +27,7 @@ const STATUS_BADGE_TONE: Record<MiniMartOrderStatus, 'pending' | 'confirmed' | '
 }
 
 export default function AdminMiniMartOrders() {
-  const { orders, loading, updateStatus, newOrderToast, dismissToast } = useMiniMartOrdersContext()
+  const { orders, loading, updateStatus, verifyPayment, rejectPayment, newOrderToast, dismissToast } = useMiniMartOrdersContext()
   const [tab, setTab] = useState<MiniMartOrderStatus | 'all'>('new')
   const [soundOn, setSoundOn] = useState(isOrderSoundEnabled())
 
@@ -95,7 +99,13 @@ export default function AdminMiniMartOrders() {
       ) : (
         <div className="space-y-3">
           {visibleOrders.map((order) => (
-            <OrderCard key={order.id} order={order} onUpdateStatus={updateStatus} />
+            <OrderCard
+              key={order.id}
+              order={order}
+              onUpdateStatus={updateStatus}
+              onVerifyPayment={verifyPayment}
+              onRejectPayment={rejectPayment}
+            />
           ))}
         </div>
       )}
@@ -106,9 +116,13 @@ export default function AdminMiniMartOrders() {
 function OrderCard({
   order,
   onUpdateStatus,
+  onVerifyPayment,
+  onRejectPayment,
 }: {
   order: MiniMartOrder
   onUpdateStatus: (id: string, status: MiniMartOrderStatus) => Promise<void>
+  onVerifyPayment: (id: string) => Promise<void>
+  onRejectPayment: (id: string) => Promise<void>
 }) {
   const [busy, setBusy] = useState<string | null>(null)
 
@@ -121,12 +135,24 @@ function OrderCard({
     }
   }
 
+  async function runAction(action: string, fn: () => Promise<void>) {
+    setBusy(action)
+    try {
+      await fn()
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const time = new Date(order.createdAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 
   return (
     <Card className="p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Badge tone={STATUS_BADGE_TONE[order.status]}>{order.status.toUpperCase()} ORDER</Badge>
+        <Badge tone={STATUS_BADGE_TONE[order.status]}>{order.status.replace('_', ' ').toUpperCase()} ORDER</Badge>
+        {order.paymentMethod === 'gcash' && (
+          <Badge tone={paymentBadgeTone(order.paymentStatus)}>{paymentBadgeLabel(order.paymentStatus, order.paymentMethod)}</Badge>
+        )}
         <span className="font-display font-bold text-lime-500">Order #{order.orderNumber}</span>
       </div>
 
@@ -166,6 +192,32 @@ function OrderCard({
         </p>
       )}
 
+      {order.paymentMethod === 'gcash' && (
+        <div className="mt-3 rounded-lg bg-white/5 p-3">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-cream-dim">GCash Payment</p>
+          {order.paymentProofUrl ? (
+            <PaymentProofImage proofRef={order.paymentProofUrl} />
+          ) : (
+            <p className="text-sm text-cream-dim">Awaiting customer to submit a payment screenshot.</p>
+          )}
+          {order.paymentStatus === 'pending' && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button size="md" disabled={busy !== null} onClick={() => runAction('verify', () => onVerifyPayment(order.id))}>
+                {busy === 'verify' ? 'Verifying…' : 'Verify Payment'}
+              </Button>
+              <Button
+                size="md"
+                variant="danger"
+                disabled={busy !== null}
+                onClick={() => runAction('reject', () => onRejectPayment(order.id))}
+              >
+                {busy === 'reject' ? 'Rejecting…' : 'Reject Payment'}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="mt-4 flex flex-wrap gap-2">
         {order.status === 'new' && (
           <Button size="md" disabled={busy !== null} onClick={() => run('accept', 'preparing')}>
@@ -182,7 +234,7 @@ function OrderCard({
             {busy === 'complete' ? 'Updating…' : 'Complete Order'}
           </Button>
         )}
-        {(order.status === 'new' || order.status === 'preparing' || order.status === 'ready') && (
+        {(order.status === 'awaiting_payment' || order.status === 'new' || order.status === 'preparing' || order.status === 'ready') && (
           <Button size="md" variant="danger" disabled={busy !== null} onClick={() => run('cancel', 'cancelled')}>
             {busy === 'cancel' ? 'Cancelling…' : 'Cancel Order'}
           </Button>

@@ -47,9 +47,23 @@ export interface DataStore {
 
   createBooking(input: BookingInput): Promise<Booking>
   updateBookingStatus(id: string, status: BookingStatus): Promise<Booking>
+  /** Manual cash-payment toggle — sets 'verified' or 'unpaid' directly, no proof involved. */
   updateBookingPayment(id: string, paymentStatus: PaymentStatus): Promise<Booking>
   cancelBooking(id: string): Promise<Booking>
   deleteBooking(id: string): Promise<void>
+
+  /** Customer submits/resubmits a GCash screenshot for their own booking —
+   *  ownership proven by knowing both the booking id and its mobile number,
+   *  same pairing findBookingByReference already relies on. */
+  submitBookingPaymentProof(
+    bookingId: string,
+    mobileNumber: string,
+    proofUrl: string,
+  ): Promise<{ success: boolean; reason: string | null }>
+  /** Admin: marks a GCash payment verified, and confirms the booking if it was still pending. */
+  verifyBookingPayment(id: string): Promise<Booking>
+  /** Admin: marks a GCash payment rejected — the customer can then resubmit. */
+  rejectBookingPayment(id: string): Promise<Booking>
 
   listBlockedSlots(): Promise<BlockedSlot[]>
   addBlockedSlot(input: Omit<BlockedSlot, 'id' | 'createdAt'>): Promise<BlockedSlot>
@@ -99,8 +113,15 @@ export interface DataStore {
   placeMiniMartOrder(input: PlaceMiniMartOrderInput): Promise<PlaceOrderResult>
   /** Narrow, PII-free status check for the customer's own just-placed order. */
   getMiniMartOrderStatus(orderNumber: string): Promise<MiniMartOrderStatusLookup | null>
+  /** Customer submits/resubmits a GCash screenshot for their own order —
+   *  the order number itself is the ownership key, same as getMiniMartOrderStatus. */
+  submitMiniMartPaymentProof(orderNumber: string, proofUrl: string): Promise<{ success: boolean; reason: string | null }>
 
   /** Admin: every order (any status), with its line items, newest first. */
   listMiniMartOrders(): Promise<MiniMartOrder[]>
   updateMiniMartOrderStatus(id: string, status: MiniMartOrderStatus): Promise<MiniMartOrder>
+  /** Admin: marks a GCash payment verified, and lets the order proceed to PREPARING. */
+  verifyMiniMartPayment(id: string): Promise<MiniMartOrder>
+  /** Admin: marks a GCash payment rejected — the customer can then resubmit. */
+  rejectMiniMartPayment(id: string): Promise<MiniMartOrder>
 }

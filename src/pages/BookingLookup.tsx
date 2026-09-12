@@ -4,15 +4,18 @@ import Layout from '../components/layout/Layout'
 import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
+import GcashPaymentSection from '../components/payments/GcashPaymentSection'
+import { useSettings } from '../context/SettingsContext'
 import { store } from '../lib/store'
 import { formatDateLong, formatTimeRange12h } from '../lib/time'
+import { paymentBadgeLabel, paymentBadgeTone } from '../lib/paymentDisplay'
 import type { Booking } from '../types'
 
 const STATUS_TONE = { pending: 'pending', confirmed: 'confirmed', cancelled: 'cancelled' } as const
-const PAYMENT_TONE = { unpaid: 'unpaid', paid: 'paid' } as const
 
 export default function BookingLookup() {
   const location = useLocation()
+  const { settings } = useSettings()
   const navState = location.state as { reference?: string; mobile?: string } | null
 
   const [reference, setReference] = useState(navState?.reference ?? '')
@@ -93,7 +96,9 @@ export default function BookingLookup() {
               <p className="font-display text-lg font-extrabold text-lime-500">{booking.bookingReference}</p>
               <div className="flex gap-2">
                 <Badge tone={STATUS_TONE[booking.status]}>{booking.status}</Badge>
-                <Badge tone={PAYMENT_TONE[booking.paymentStatus]}>{booking.paymentStatus}</Badge>
+                <Badge tone={paymentBadgeTone(booking.paymentStatus)}>
+                  {paymentBadgeLabel(booking.paymentStatus, booking.paymentMethod)}
+                </Badge>
               </div>
             </div>
             <div className="my-4 h-px bg-white/10" />
@@ -107,6 +112,21 @@ export default function BookingLookup() {
               <Row label="Payment Method" value={booking.paymentMethod === 'gcash' ? 'GCash' : 'Cash at Court'} />
             </div>
           </Card>
+        )}
+
+        {searched && booking && booking.paymentMethod === 'gcash' && (
+          <GcashPaymentSection
+            amount={booking.totalAmount}
+            paymentStatus={booking.paymentStatus}
+            gcashNumber={settings.gcashNumber}
+            gcashAccountName={settings.gcashAccountName}
+            gcashQrCodeUrl={settings.gcashQrCodeUrl}
+            onSubmitProof={async (proofUrl) => {
+              const result = await store.submitBookingPaymentProof(booking.id, booking.mobileNumber, proofUrl)
+              if (result.success) await handleSearch(booking.bookingReference, booking.mobileNumber)
+              return result
+            }}
+          />
         )}
       </div>
     </Layout>

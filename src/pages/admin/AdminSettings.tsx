@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSettings } from '../../context/SettingsContext'
 import { isSupabaseConfigured } from '../../lib/supabaseClient'
+import { uploadGcashQrImage } from '../../lib/paymentSettingsStorage'
 import type { Settings } from '../../types'
 import { Section, TextField, NumberField, TimeField } from '../../components/admin/SettingsFields'
 import OpenPlaySettingsPanel from '../../components/admin/OpenPlaySettingsPanel'
@@ -12,11 +13,31 @@ export default function AdminSettings() {
   const [saving, setSaving] = useState<string | null>(null)
   const [savedMsg, setSavedMsg] = useState<string | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [uploadingQr, setUploadingQr] = useState(false)
+  const qrFileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => setForm(settings), [settings])
 
   function set<K extends keyof Settings>(key: K, value: Settings[K]) {
     setForm((f) => ({ ...f, [key]: value }))
+  }
+
+  async function handleQrFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploadingQr(true)
+    setErrorMsg(null)
+    try {
+      const url = await uploadGcashQrImage(file)
+      set('gcashQrCodeUrl', url)
+      await save('GCash settings', { gcashQrCodeUrl: url })
+    } catch (err) {
+      logError('Failed to upload GCash QR code:', err)
+      setErrorMsg(`Couldn't upload QR code: ${getErrorMessage(err)}`)
+    } finally {
+      setUploadingQr(false)
+      if (qrFileInputRef.current) qrFileInputRef.current.value = ''
+    }
   }
 
   async function save(section: string, patch: Partial<Settings>) {
@@ -159,7 +180,7 @@ export default function AdminSettings() {
       </Section>
 
       <Section
-        title="GCash Payment Details"
+        title="GCash Payment"
         onSave={() =>
           save('GCash settings', {
             gcashNumber: form.gcashNumber,
@@ -171,7 +192,43 @@ export default function AdminSettings() {
       >
         <TextField label="GCash Number" value={form.gcashNumber} onChange={(v) => set('gcashNumber', v)} />
         <TextField label="GCash Account Name" value={form.gcashAccountName} onChange={(v) => set('gcashAccountName', v)} />
-        <TextField label="QR Code Image URL (optional)" value={form.gcashQrCodeUrl} onChange={(v) => set('gcashQrCodeUrl', v)} />
+
+        <div>
+          <span className="mb-1.5 block text-sm font-semibold text-cream-dim">QR Code</span>
+          <div className="flex items-center gap-3">
+            <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-xl bg-white">
+              {form.gcashQrCodeUrl ? (
+                <img src={form.gcashQrCodeUrl} alt="GCash QR code" className="h-full w-full object-contain p-1" />
+              ) : (
+                <span className="text-2xl">📷</span>
+              )}
+            </div>
+            <div className="flex-1 space-y-2">
+              <TextField label="" value={form.gcashQrCodeUrl} onChange={(v) => set('gcashQrCodeUrl', v)} />
+              {isSupabaseConfigured && (
+                <>
+                  <input
+                    ref={qrFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleQrFileSelected}
+                    className="hidden"
+                    id="gcash-qr-file-input"
+                  />
+                  <label
+                    htmlFor="gcash-qr-file-input"
+                    className="inline-block cursor-pointer rounded-lg bg-white/5 px-3 py-1.5 text-xs font-bold text-cream hover:bg-white/10"
+                  >
+                    {uploadingQr ? 'Uploading…' : 'Upload / Replace QR'}
+                  </label>
+                </>
+              )}
+            </div>
+          </div>
+          {!isSupabaseConfigured && (
+            <p className="mt-1 text-xs text-cream-dim">Paste an image URL above (QR upload requires Supabase to be connected).</p>
+          )}
+        </div>
       </Section>
 
       {!isSupabaseConfigured && (

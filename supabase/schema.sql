@@ -25,8 +25,13 @@ create table if not exists bookings (
   promo_code text,
   discount_amount numeric(10, 2) not null default 0,
   status text not null default 'pending' check (status in ('pending', 'confirmed', 'cancelled')),
-  payment_status text not null default 'unpaid' check (payment_status in ('unpaid', 'paid')),
+  payment_status text not null default 'unpaid' check (payment_status in ('unpaid', 'pending', 'verified', 'rejected')),
   payment_method text not null default 'cash' check (payment_method in ('gcash', 'cash')),
+  -- Private Storage object path (production) or data URL (demo mode) of the
+  -- customer's uploaded GCash screenshot — never a public URL. Resolved to a
+  -- viewable image only for authenticated admins, via a signed URL.
+  payment_proof_url text,
+  payment_verified_at timestamptz,
   notes text,
   created_at timestamptz not null default now()
 );
@@ -43,6 +48,18 @@ alter table bookings add column if not exists discount_amount numeric(10, 2) not
 update bookings set normal_total = total_amount where normal_total is null;
 alter table bookings alter column normal_total set not null;
 alter table bookings alter column normal_total set default 0;
+
+-- GCash manual payment verification (screenshot upload + admin review).
+-- payment_status gains 'pending'/'rejected' alongside the original
+-- 'unpaid'/'paid' — existing 'paid' rows are remapped to 'verified' (same
+-- meaning, new name) before the constraint is tightened, so no existing
+-- booking's payment state is lost or reinterpreted.
+alter table bookings add column if not exists payment_proof_url text;
+alter table bookings add column if not exists payment_verified_at timestamptz;
+update bookings set payment_status = 'verified' where payment_status = 'paid';
+alter table bookings drop constraint if exists bookings_payment_status_check;
+alter table bookings add constraint bookings_payment_status_check
+  check (payment_status in ('unpaid', 'pending', 'verified', 'rejected'));
 
 -- Auto-generate a PKL-XXXXXX reference if the client doesn't supply one.
 create or replace function generate_booking_reference() returns text as $$
@@ -340,6 +357,111 @@ $$;
 
 revoke all on function create_booking(text, text, text, integer, date, time, integer, text, text, text) from public;
 grant execute on function create_booking(text, text, text, integer, date, time, integer, text, text, text) to anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- GCash manual payment: submit / verify / reject.
+-- submit_booking_payment_proof is the only way a customer attaches a payment
+-- screenshot to their own booking — SECURITY DEFINER so it can update
+-- `bookings` without anon needing any direct grant. Ownership is proven by
+-- knowing both the booking id and its mobile number, the same pairing
+-- get_booking_by_reference already relies on, so a guessed/enumerated id
+-- alone isn't enough.
+-- ---------------------------------------------------------------------------
+create or replace function submit_booking_payment_proof(
+  p_booking_id uuid,
+  p_mobile_number text,
+  p_proof_path text
+)
+returns table (success boolean, reason text)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  b bookings;
+begin
+  select * into b from bookings where id = p_booking_id for update;
+  if not found then
+    return query select false, 'Booking not found.';
+    return;
+  end if;
+  if replace(replace(b.mobile_number, ' ', ''), '-', '') <> replace(replace(trim(p_mobile_number), ' ', ''), '-', '') then
+    return query select false, 'Booking not found.';
+    return;
+  end if;
+  if b.payment_method <> 'gcash' then
+    return query select false, 'This booking does not use GCash payment.';
+    return;
+  end if;
+  if b.payment_status = 'verified' then
+    return query select false, 'This booking has already been paid and verified.';
+    return;
+  end if;
+  if p_proof_path is null or length(trim(p_proof_path)) = 0 then
+    return query select false, 'Please upload a payment screenshot.';
+    return;
+  end if;
+
+  update bookings
+  set payment_status = 'pending', payment_proof_url = p_proof_path, payment_verified_at = null
+  where id = p_booking_id;
+
+  return query select true, null::text;
+end;
+$$;
+
+revoke all on function submit_booking_payment_proof(uuid, text, text) from public;
+grant execute on function submit_booking_payment_proof(uuid, text, text) to anon, authenticated;
+
+-- Admin-only: authenticated already has full UPDATE on bookings via the
+-- "admins can update bookings" RLS policy below, so these run as the caller
+-- (no SECURITY DEFINER needed) — they just bundle "verify payment" + "confirm
+-- the booking if it was still pending" into one atomic statement.
+create or replace function verify_booking_payment(p_booking_id uuid)
+returns bookings
+language plpgsql
+set search_path = public
+as $$
+declare
+  b bookings;
+begin
+  update bookings
+  set payment_status = 'verified',
+      payment_verified_at = now(),
+      status = case when status = 'pending' then 'confirmed' else status end
+  where id = p_booking_id
+  returning * into b;
+  if not found then
+    raise exception 'Booking not found.';
+  end if;
+  return b;
+end;
+$$;
+
+revoke all on function verify_booking_payment(uuid) from public;
+grant execute on function verify_booking_payment(uuid) to authenticated;
+
+create or replace function reject_booking_payment(p_booking_id uuid)
+returns bookings
+language plpgsql
+set search_path = public
+as $$
+declare
+  b bookings;
+begin
+  update bookings
+  set payment_status = 'rejected', payment_verified_at = null
+  where id = p_booking_id
+  returning * into b;
+  if not found then
+    raise exception 'Booking not found.';
+  end if;
+  return b;
+end;
+$$;
+
+revoke all on function reject_booking_payment(uuid) from public;
+grant execute on function reject_booking_payment(uuid) to authenticated;
 
 -- Anon-callable, read-only preview used by the "Apply" button on the booking
 -- page — runs the exact same trusted logic as the insert trigger above, so
@@ -865,6 +987,53 @@ create policy "admins can manage mini mart images" on storage.objects
   with check (bucket_id = 'mini-mart-images');
 
 -- ---------------------------------------------------------------------------
+-- Storage bucket for the admin's GCash QR code. Public read (every customer
+-- needs to see it to pay), admin-only write — same shape as mini-mart-images.
+-- ---------------------------------------------------------------------------
+insert into storage.buckets (id, name, public)
+values ('payment-settings', 'payment-settings', true)
+on conflict (id) do nothing;
+
+drop policy if exists "public can view payment settings images" on storage.objects;
+create policy "public can view payment settings images" on storage.objects
+  for select to anon, authenticated
+  using (bucket_id = 'payment-settings');
+
+drop policy if exists "admins can manage payment settings images" on storage.objects;
+create policy "admins can manage payment settings images" on storage.objects
+  for all to authenticated
+  using (bucket_id = 'payment-settings')
+  with check (bucket_id = 'payment-settings');
+
+-- ---------------------------------------------------------------------------
+-- Storage bucket for customer-uploaded GCash payment screenshots. PRIVATE —
+-- unlike the two buckets above, nobody gets a public-read policy here: a
+-- payment screenshot can contain personal info, so only an authenticated
+-- admin may read it back (via a signed URL, itself gated by the SELECT
+-- policy below). Anon can INSERT (customers have no login) but never SELECT,
+-- UPDATE, or DELETE — so even someone holding another customer's object path
+-- can't read or tamper with it, only the admin dashboard can.
+-- ---------------------------------------------------------------------------
+insert into storage.buckets (id, name, public)
+values ('payment-proofs', 'payment-proofs', false)
+on conflict (id) do nothing;
+
+drop policy if exists "anyone can upload payment proofs" on storage.objects;
+create policy "anyone can upload payment proofs" on storage.objects
+  for insert to anon, authenticated
+  with check (bucket_id = 'payment-proofs');
+
+drop policy if exists "admins can view payment proofs" on storage.objects;
+create policy "admins can view payment proofs" on storage.objects
+  for select to authenticated
+  using (bucket_id = 'payment-proofs');
+
+drop policy if exists "admins can delete payment proofs" on storage.objects;
+create policy "admins can delete payment proofs" on storage.objects
+  for delete to authenticated
+  using (bucket_id = 'payment-proofs');
+
+-- ---------------------------------------------------------------------------
 -- mini_mart_orders / mini_mart_order_items — customer orders placed without
 -- login. Contains customer PII (name), so — same pattern as bookings/Open
 -- Play — anon gets no direct SELECT/INSERT: all customer interaction goes
@@ -880,11 +1049,37 @@ create table if not exists mini_mart_orders (
   -- for it) — kept only so any existing rows/data aren't lost.
   court_location text,
   notes text,
-  status text not null default 'new' check (status in ('new', 'preparing', 'ready', 'completed', 'cancelled')),
+  status text not null default 'new' check (status in ('awaiting_payment', 'new', 'preparing', 'ready', 'completed', 'cancelled')),
   total numeric(10, 2) not null,
+  payment_method text not null default 'cash' check (payment_method in ('gcash', 'cash')),
+  payment_status text not null default 'unpaid' check (payment_status in ('unpaid', 'pending', 'verified', 'rejected')),
+  payment_proof_url text,
+  payment_verified_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Defensive guards in case `mini_mart_orders` already existed from an
+-- earlier, partial version of this script.
+alter table mini_mart_orders add column if not exists payment_method text not null default 'cash';
+alter table mini_mart_orders add column if not exists payment_status text not null default 'unpaid';
+alter table mini_mart_orders add column if not exists payment_proof_url text;
+alter table mini_mart_orders add column if not exists payment_verified_at timestamptz;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'mini_mart_orders_payment_method_check') then
+    alter table mini_mart_orders add constraint mini_mart_orders_payment_method_check
+      check (payment_method in ('gcash', 'cash'));
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'mini_mart_orders_payment_status_check') then
+    alter table mini_mart_orders add constraint mini_mart_orders_payment_status_check
+      check (payment_status in ('unpaid', 'pending', 'verified', 'rejected'));
+  end if;
+end $$;
+alter table mini_mart_orders drop constraint if exists mini_mart_orders_status_check;
+alter table mini_mart_orders add constraint mini_mart_orders_status_check
+  check (status in ('awaiting_payment', 'new', 'preparing', 'ready', 'completed', 'cancelled'));
 
 create index if not exists mini_mart_orders_status_idx on mini_mart_orders (status);
 create index if not exists mini_mart_orders_created_at_idx on mini_mart_orders (created_at desc);
@@ -967,17 +1162,20 @@ create trigger trg_restore_mini_mart_order_stock
 -- itself has been inserted, inside the same transaction as everything else.
 -- p_items shape: [{"item_id": "<uuid>", "quantity": 2}, ...]
 --
--- Checkout no longer collects Court/Location, so this function's signature
--- dropped that parameter. Postgres treats a different argument list as a
--- different function, so the old 4-arg version is dropped explicitly rather
--- than left behind as a second, unused way to place an order.
+-- Checkout no longer collects Court/Location, and now takes a payment
+-- method, so this function's signature keeps changing shape. Postgres treats
+-- a different argument list as a different function, so every prior version
+-- is dropped explicitly rather than left behind as a second, unused way to
+-- place an order.
 -- ---------------------------------------------------------------------------
 drop function if exists place_mini_mart_order(text, text, text, jsonb);
+drop function if exists place_mini_mart_order(text, text, jsonb);
 
 create or replace function place_mini_mart_order(
   p_customer_name text,
   p_notes text,
-  p_items jsonb
+  p_items jsonb,
+  p_payment_method text default 'cash'
 )
 returns table (
   success boolean,
@@ -985,7 +1183,8 @@ returns table (
   order_id uuid,
   order_number text,
   total numeric,
-  status text
+  status text,
+  payment_status text
 )
 language plpgsql
 security definer
@@ -999,13 +1198,18 @@ declare
   prod record;
   qty integer;
   line_subtotal numeric;
+  initial_status text;
 begin
   if p_customer_name is null or length(trim(p_customer_name)) = 0 then
-    return query select false, 'Customer name is required.', null::uuid, null::text, 0::numeric, null::text;
+    return query select false, 'Customer name is required.', null::uuid, null::text, 0::numeric, null::text, null::text;
     return;
   end if;
   if p_items is null or jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) = 0 then
-    return query select false, 'Your cart is empty.', null::uuid, null::text, 0::numeric, null::text;
+    return query select false, 'Your cart is empty.', null::uuid, null::text, 0::numeric, null::text, null::text;
+    return;
+  end if;
+  if p_payment_method not in ('gcash', 'cash') then
+    return query select false, 'Invalid payment method.', null::uuid, null::text, 0::numeric, null::text, null::text;
     return;
   end if;
 
@@ -1016,29 +1220,35 @@ begin
   for line in select * from jsonb_array_elements(p_items) loop
     qty := (line->>'quantity')::integer;
     if qty is null or qty <= 0 then
-      return query select false, 'Invalid item quantity.', null::uuid, null::text, 0::numeric, null::text;
+      return query select false, 'Invalid item quantity.', null::uuid, null::text, 0::numeric, null::text, null::text;
       return;
     end if;
 
     select * into prod from mini_mart_items where id = (line->>'item_id')::uuid for update;
     if not found then
-      return query select false, 'One of the items in your cart is no longer available.', null::uuid, null::text, 0::numeric, null::text;
+      return query select false, 'One of the items in your cart is no longer available.', null::uuid, null::text, 0::numeric, null::text, null::text;
       return;
     end if;
     if not prod.is_available then
-      return query select false, format('%s is sold out.', prod.name), null::uuid, null::text, 0::numeric, null::text;
+      return query select false, format('%s is sold out.', prod.name), null::uuid, null::text, 0::numeric, null::text, null::text;
       return;
     end if;
     if prod.stock_quantity < qty then
-      return query select false, format('Only %s %s left in stock.', prod.stock_quantity, prod.name), null::uuid, null::text, 0::numeric, null::text;
+      return query select false, format('Only %s %s left in stock.', prod.stock_quantity, prod.name), null::uuid, null::text, 0::numeric, null::text, null::text;
       return;
     end if;
 
     computed_total := computed_total + (prod.price * qty);
   end loop;
 
-  insert into mini_mart_orders (customer_name, notes, status, total)
-  values (trim(p_customer_name), nullif(trim(coalesce(p_notes, '')), ''), 'new', computed_total)
+  -- GCash orders start life as 'awaiting_payment' — they still reserve their
+  -- stock immediately below (same as a booking reserves its time slot before
+  -- payment is verified) but can't proceed to 'preparing' until an admin
+  -- verifies the payment. Cash orders are unaffected: 'new', same as before.
+  initial_status := case when p_payment_method = 'gcash' then 'awaiting_payment' else 'new' end;
+
+  insert into mini_mart_orders (customer_name, notes, status, total, payment_method)
+  values (trim(p_customer_name), nullif(trim(coalesce(p_notes, '')), ''), initial_status, computed_total, p_payment_method)
   returning id, order_number into new_order_id, new_order_number;
 
   -- Only now, after the order itself exists, insert its line items and
@@ -1053,27 +1263,126 @@ begin
     update mini_mart_items set stock_quantity = stock_quantity - qty where id = prod.id;
   end loop;
 
-  return query select true, null::text, new_order_id, new_order_number, computed_total, 'new'::text;
+  return query select true, null::text, new_order_id, new_order_number, computed_total, initial_status, 'unpaid'::text;
 end;
 $$;
 
-revoke all on function place_mini_mart_order(text, text, jsonb) from public;
-grant execute on function place_mini_mart_order(text, text, jsonb) to anon, authenticated;
+revoke all on function place_mini_mart_order(text, text, jsonb, text) from public;
+grant execute on function place_mini_mart_order(text, text, jsonb, text) to anon, authenticated;
 
 -- Narrow, PII-free status lookup for "View Order Status" — a customer who
 -- already has their own order number can check it, but this never returns
--- customer_name/notes, and there's no way to list orders.
+-- customer_name/notes/payment_proof_url, and there's no way to list orders.
+-- payment_method/payment_status aren't PII, so they're safe to include here —
+-- the customer needs them to know whether to show the GCash upload UI again.
 create or replace function get_mini_mart_order_status(p_order_number text)
-returns table (order_number text, status text, total numeric)
+returns table (order_number text, status text, total numeric, payment_method text, payment_status text)
 language sql
 security definer
 set search_path = public
 as $$
-  select order_number, status, total from mini_mart_orders where order_number = trim(p_order_number);
+  select order_number, status, total, payment_method, payment_status
+  from mini_mart_orders where order_number = trim(p_order_number);
 $$;
 
 revoke all on function get_mini_mart_order_status(text) from public;
 grant execute on function get_mini_mart_order_status(text) to anon, authenticated;
+
+-- submit_mini_mart_payment_proof: same ownership model as
+-- get_mini_mart_order_status — knowledge of the order number alone is
+-- sufficient, since that's already the established bearer key for narrow,
+-- non-PII actions on a customer's own just-placed order.
+create or replace function submit_mini_mart_payment_proof(
+  p_order_number text,
+  p_proof_path text
+)
+returns table (success boolean, reason text)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  o mini_mart_orders;
+begin
+  select * into o from mini_mart_orders where order_number = trim(p_order_number) for update;
+  if not found then
+    return query select false, 'Order not found.';
+    return;
+  end if;
+  if o.payment_method <> 'gcash' then
+    return query select false, 'This order does not use GCash payment.';
+    return;
+  end if;
+  if o.payment_status = 'verified' then
+    return query select false, 'This order has already been paid and verified.';
+    return;
+  end if;
+  if p_proof_path is null or length(trim(p_proof_path)) = 0 then
+    return query select false, 'Please upload a payment screenshot.';
+    return;
+  end if;
+
+  update mini_mart_orders
+  set payment_status = 'pending', payment_proof_url = p_proof_path, payment_verified_at = null
+  where id = o.id;
+
+  return query select true, null::text;
+end;
+$$;
+
+revoke all on function submit_mini_mart_payment_proof(text, text) from public;
+grant execute on function submit_mini_mart_payment_proof(text, text) to anon, authenticated;
+
+-- Admin-only: authenticated already has full UPDATE on mini_mart_orders via
+-- the "admins can update mini mart orders" RLS policy below, so these run as
+-- the caller (no SECURITY DEFINER needed) — bundling "verify payment" +
+-- "let the order proceed to PREPARING" (by lifting it out of
+-- awaiting_payment back into the normal 'new' flow) into one statement.
+create or replace function verify_mini_mart_payment(p_order_id uuid)
+returns mini_mart_orders
+language plpgsql
+set search_path = public
+as $$
+declare
+  o mini_mart_orders;
+begin
+  update mini_mart_orders
+  set payment_status = 'verified',
+      payment_verified_at = now(),
+      status = case when status = 'awaiting_payment' then 'new' else status end
+  where id = p_order_id
+  returning * into o;
+  if not found then
+    raise exception 'Order not found.';
+  end if;
+  return o;
+end;
+$$;
+
+revoke all on function verify_mini_mart_payment(uuid) from public;
+grant execute on function verify_mini_mart_payment(uuid) to authenticated;
+
+create or replace function reject_mini_mart_payment(p_order_id uuid)
+returns mini_mart_orders
+language plpgsql
+set search_path = public
+as $$
+declare
+  o mini_mart_orders;
+begin
+  update mini_mart_orders
+  set payment_status = 'rejected', payment_verified_at = null
+  where id = p_order_id
+  returning * into o;
+  if not found then
+    raise exception 'Order not found.';
+  end if;
+  return o;
+end;
+$$;
+
+revoke all on function reject_mini_mart_payment(uuid) from public;
+grant execute on function reject_mini_mart_payment(uuid) to authenticated;
 
 alter table mini_mart_orders enable row level security;
 alter table mini_mart_order_items enable row level security;

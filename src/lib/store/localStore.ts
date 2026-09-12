@@ -11,6 +11,7 @@ import type {
   MiniMartItem,
   MiniMartOrder,
   MiniMartOrderItem,
+  MiniMartOrderStatus,
 } from '../../types'
 import { DEFAULT_SETTINGS } from '../../types'
 import { calculatePrice, generateBookingReference } from '../pricing'
@@ -277,6 +278,8 @@ export const localStore: DataStore = {
       status: 'pending',
       paymentStatus: 'unpaid',
       paymentMethod: input.paymentMethod,
+      paymentProofUrl: null,
+      paymentVerifiedAt: null,
       notes: input.notes,
       createdAt: new Date().toISOString(),
     }
@@ -299,6 +302,46 @@ export const localStore: DataStore = {
     const idx = bookings.findIndex((b) => b.id === id)
     if (idx === -1) throw new Error('Booking not found')
     bookings[idx] = { ...bookings[idx], paymentStatus }
+    write(KEYS.bookings, bookings)
+    return bookings[idx]
+  },
+
+  async submitBookingPaymentProof(bookingId, mobileNumber, proofUrl) {
+    const bookings = read<Booking[]>(KEYS.bookings, [])
+    const idx = bookings.findIndex((b) => b.id === bookingId)
+    if (idx === -1 || normalizeMobile(bookings[idx].mobileNumber) !== normalizeMobile(mobileNumber)) {
+      return { success: false, reason: 'Booking not found.' }
+    }
+    if (bookings[idx].paymentMethod !== 'gcash') {
+      return { success: false, reason: 'This booking does not use GCash payment.' }
+    }
+    if (bookings[idx].paymentStatus === 'verified') {
+      return { success: false, reason: 'This booking has already been paid and verified.' }
+    }
+    bookings[idx] = { ...bookings[idx], paymentStatus: 'pending', paymentProofUrl: proofUrl, paymentVerifiedAt: null }
+    write(KEYS.bookings, bookings)
+    return { success: true, reason: null }
+  },
+
+  async verifyBookingPayment(id) {
+    const bookings = read<Booking[]>(KEYS.bookings, [])
+    const idx = bookings.findIndex((b) => b.id === id)
+    if (idx === -1) throw new Error('Booking not found')
+    bookings[idx] = {
+      ...bookings[idx],
+      paymentStatus: 'verified',
+      paymentVerifiedAt: new Date().toISOString(),
+      status: bookings[idx].status === 'pending' ? 'confirmed' : bookings[idx].status,
+    }
+    write(KEYS.bookings, bookings)
+    return bookings[idx]
+  },
+
+  async rejectBookingPayment(id) {
+    const bookings = read<Booking[]>(KEYS.bookings, [])
+    const idx = bookings.findIndex((b) => b.id === id)
+    if (idx === -1) throw new Error('Booking not found')
+    bookings[idx] = { ...bookings[idx], paymentStatus: 'rejected', paymentVerifiedAt: null }
     write(KEYS.bookings, bookings)
     return bookings[idx]
   },
@@ -519,8 +562,10 @@ export const localStore: DataStore = {
   },
 
   async placeMiniMartOrder(input) {
-    if (!input.customerName.trim()) return { success: false, reason: 'Customer name is required.', orderId: null, orderNumber: null, total: 0, status: null }
-    if (input.items.length === 0) return { success: false, reason: 'Your cart is empty.', orderId: null, orderNumber: null, total: 0, status: null }
+    if (!input.customerName.trim())
+      return { success: false, reason: 'Customer name is required.', orderId: null, orderNumber: null, total: 0, status: null, paymentStatus: null }
+    if (input.items.length === 0)
+      return { success: false, reason: 'Your cart is empty.', orderId: null, orderNumber: null, total: 0, status: null, paymentStatus: null }
 
     const products = read<MiniMartItem[]>(KEYS.miniMartItems, DEFAULT_MINI_MART_ITEMS)
     const orderId = newId()
@@ -531,8 +576,10 @@ export const localStore: DataStore = {
     // Validate every line (including stock) before writing anything.
     for (const line of input.items) {
       const product = products.find((p) => p.id === line.itemId)
-      if (!product) return { success: false, reason: 'One of the items in your cart is no longer available.', orderId: null, orderNumber: null, total: 0, status: null }
-      if (!product.isAvailable) return { success: false, reason: `${product.name} is sold out.`, orderId: null, orderNumber: null, total: 0, status: null }
+      if (!product)
+        return { success: false, reason: 'One of the items in your cart is no longer available.', orderId: null, orderNumber: null, total: 0, status: null, paymentStatus: null }
+      if (!product.isAvailable)
+        return { success: false, reason: `${product.name} is sold out.`, orderId: null, orderNumber: null, total: 0, status: null, paymentStatus: null }
       if (product.stockQuantity < line.quantity) {
         return {
           success: false,
@@ -541,6 +588,7 @@ export const localStore: DataStore = {
           orderNumber: null,
           total: 0,
           status: null,
+          paymentStatus: null,
         }
       }
       const subtotal = product.price * line.quantity
@@ -557,14 +605,19 @@ export const localStore: DataStore = {
       })
     }
 
+    const initialStatus: MiniMartOrderStatus = input.paymentMethod === 'gcash' ? 'awaiting_payment' : 'new'
     const order: MiniMartOrder = {
       id: orderId,
       orderNumber: nextMiniMartOrderNumber(),
       customerName: input.customerName.trim(),
       notes: input.notes?.trim() || '',
-      status: 'new',
+      status: initialStatus,
       total,
       items: orderItems,
+      paymentMethod: input.paymentMethod,
+      paymentStatus: 'unpaid',
+      paymentProofUrl: null,
+      paymentVerifiedAt: null,
       createdAt: now,
       updatedAt: now,
     }
@@ -573,21 +626,72 @@ export const localStore: DataStore = {
     orders.push(order)
     write(KEYS.miniMartOrders, orders)
 
-    // Only deduct stock after the order itself has been successfully created.
+    // Only deduct stock after the order itself has been successfully created —
+    // GCash orders reserve stock immediately too, same as a booking reserves
+    // its time slot before payment is verified.
     const updatedProducts = products.map((p) => {
       const line = orderItems.find((oi) => oi.itemId === p.id)
       return line ? { ...p, stockQuantity: p.stockQuantity - line.quantity, updatedAt: now } : p
     })
     write(KEYS.miniMartItems, updatedProducts)
 
-    return { success: true, reason: null, orderId: order.id, orderNumber: order.orderNumber, total, status: 'new' }
+    return {
+      success: true,
+      reason: null,
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      total,
+      status: initialStatus,
+      paymentStatus: order.paymentStatus,
+    }
   },
 
   async getMiniMartOrderStatus(orderNumber) {
     const orders = read<MiniMartOrder[]>(KEYS.miniMartOrders, [])
     const order = orders.find((o) => o.orderNumber === orderNumber)
     if (!order) return null
-    return { orderNumber: order.orderNumber, status: order.status, total: order.total }
+    return {
+      orderNumber: order.orderNumber,
+      status: order.status,
+      total: order.total,
+      paymentMethod: order.paymentMethod,
+      paymentStatus: order.paymentStatus,
+    }
+  },
+
+  async submitMiniMartPaymentProof(orderNumber, proofUrl) {
+    const orders = read<MiniMartOrder[]>(KEYS.miniMartOrders, [])
+    const idx = orders.findIndex((o) => o.orderNumber === orderNumber)
+    if (idx === -1) return { success: false, reason: 'Order not found.' }
+    if (orders[idx].paymentMethod !== 'gcash') return { success: false, reason: 'This order does not use GCash payment.' }
+    if (orders[idx].paymentStatus === 'verified') return { success: false, reason: 'This order has already been paid and verified.' }
+    orders[idx] = { ...orders[idx], paymentStatus: 'pending', paymentProofUrl: proofUrl, paymentVerifiedAt: null }
+    write(KEYS.miniMartOrders, orders)
+    return { success: true, reason: null }
+  },
+
+  async verifyMiniMartPayment(id) {
+    const orders = read<MiniMartOrder[]>(KEYS.miniMartOrders, [])
+    const idx = orders.findIndex((o) => o.id === id)
+    if (idx === -1) throw new Error('Order not found')
+    orders[idx] = {
+      ...orders[idx],
+      paymentStatus: 'verified',
+      paymentVerifiedAt: new Date().toISOString(),
+      status: orders[idx].status === 'awaiting_payment' ? 'new' : orders[idx].status,
+      updatedAt: new Date().toISOString(),
+    }
+    write(KEYS.miniMartOrders, orders)
+    return orders[idx]
+  },
+
+  async rejectMiniMartPayment(id) {
+    const orders = read<MiniMartOrder[]>(KEYS.miniMartOrders, [])
+    const idx = orders.findIndex((o) => o.id === id)
+    if (idx === -1) throw new Error('Order not found')
+    orders[idx] = { ...orders[idx], paymentStatus: 'rejected', paymentVerifiedAt: null, updatedAt: new Date().toISOString() }
+    write(KEYS.miniMartOrders, orders)
+    return orders[idx]
   },
 
   async listMiniMartOrders() {

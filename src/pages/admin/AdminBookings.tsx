@@ -70,6 +70,8 @@ export default function AdminBookings() {
               onCancel={data.cancelBooking}
               onMarkPaid={data.markPaid}
               onMarkUnpaid={data.markUnpaid}
+              onVerifyPayment={data.verifyPayment}
+              onRejectPayment={data.rejectPayment}
               onDelete={data.deleteBooking}
             />
           ))}

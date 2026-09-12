@@ -1,5 +1,8 @@
 export type BookingStatus = 'pending' | 'confirmed' | 'cancelled'
-export type PaymentStatus = 'unpaid' | 'paid'
+/** 'unpaid' = no proof submitted yet. 'pending' = customer uploaded a GCash
+ *  screenshot, awaiting admin review. 'verified'/'rejected' = admin decision.
+ *  Cash payments skip 'pending' entirely — admin sets 'verified' manually. */
+export type PaymentStatus = 'unpaid' | 'pending' | 'verified' | 'rejected'
 export type PaymentMethod = 'gcash' | 'cash'
 export type SlotStatus = 'available' | 'pending' | 'confirmed' | 'paid' | 'blocked' | 'past'
 
@@ -25,6 +28,11 @@ export interface Booking {
   status: BookingStatus
   paymentStatus: PaymentStatus
   paymentMethod: PaymentMethod
+  /** Storage path (Supabase) or data URL (demo mode) of the customer's uploaded
+   *  GCash screenshot. Never a public URL — resolved to a viewable image only
+   *  for authenticated admins, via a short-lived signed URL. */
+  paymentProofUrl: string | null
+  paymentVerifiedAt: string | null
   notes?: string
   createdAt: string
 }
@@ -288,7 +296,7 @@ export interface MiniMartItemInput {
 // Pricing is always looked up server-side from mini_mart_items at order time,
 // never trusted from the client, same principle as booking totals.
 // ---------------------------------------------------------------------------
-export type MiniMartOrderStatus = 'new' | 'preparing' | 'ready' | 'completed' | 'cancelled'
+export type MiniMartOrderStatus = 'awaiting_payment' | 'new' | 'preparing' | 'ready' | 'completed' | 'cancelled'
 
 export interface MiniMartOrderItem {
   id: string
@@ -309,6 +317,11 @@ export interface MiniMartOrder {
   status: MiniMartOrderStatus
   total: number
   items: MiniMartOrderItem[]
+  paymentMethod: PaymentMethod
+  paymentStatus: PaymentStatus
+  /** Storage path (Supabase) or data URL (demo mode) — same handling as Booking.paymentProofUrl. */
+  paymentProofUrl: string | null
+  paymentVerifiedAt: string | null
   createdAt: string
   updatedAt: string
 }
@@ -322,6 +335,7 @@ export interface PlaceMiniMartOrderInput {
   customerName: string
   notes?: string
   items: MiniMartOrderItemInput[]
+  paymentMethod: PaymentMethod
 }
 
 /** Result of placing an order — trusted, server-computed (RPC in production). */
@@ -332,11 +346,15 @@ export interface PlaceOrderResult {
   orderNumber: string | null
   total: number
   status: MiniMartOrderStatus | null
+  paymentStatus: PaymentStatus | null
 }
 
-/** Narrow, PII-free status lookup for "View Order Status". */
+/** Narrow, PII-free status lookup for "View Order Status" — includes payment
+ *  state (not PII) but never the proof image itself. */
 export interface MiniMartOrderStatusLookup {
   orderNumber: string
   status: MiniMartOrderStatus
   total: number
+  paymentMethod: PaymentMethod
+  paymentStatus: PaymentStatus
 }

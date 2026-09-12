@@ -21,16 +21,21 @@ export default function AdminOverview() {
     () => data.bookings.filter((b) => b.paymentStatus === 'unpaid' && b.status !== 'cancelled').length,
     [data.bookings],
   )
+  const paymentsToVerifyCount = useMemo(
+    () => data.bookings.filter((b) => b.paymentStatus === 'pending').length,
+    [data.bookings],
+  )
 
   if (data.loading) return <p className="text-cream-dim">Loading…</p>
 
   return (
     <div className="space-y-8">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         <Stat label="Today" value={todaysBookings.length} />
         <Stat label="Upcoming" value={upcoming.length} />
         <Stat label="Pending Approval" value={pendingCount} />
         <Stat label="Unpaid" value={unpaidCount} />
+        <Stat label="Payments to Verify" value={paymentsToVerifyCount} />
       </div>
 
       <section>
@@ -47,6 +52,8 @@ export default function AdminOverview() {
                 onCancel={data.cancelBooking}
                 onMarkPaid={data.markPaid}
                 onMarkUnpaid={data.markUnpaid}
+                onVerifyPayment={data.verifyPayment}
+                onRejectPayment={data.rejectPayment}
                 onDelete={data.deleteBooking}
               />
             ))}
@@ -68,6 +75,8 @@ export default function AdminOverview() {
                 onCancel={data.cancelBooking}
                 onMarkPaid={data.markPaid}
                 onMarkUnpaid={data.markUnpaid}
+                onVerifyPayment={data.verifyPayment}
+                onRejectPayment={data.rejectPayment}
                 onDelete={data.deleteBooking}
               />
             ))}

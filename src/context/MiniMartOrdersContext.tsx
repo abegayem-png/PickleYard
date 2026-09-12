@@ -9,6 +9,8 @@ interface MiniMartOrdersContextValue {
   loading: boolean
   newOrderCount: number
   updateStatus: (id: string, status: MiniMartOrderStatus) => Promise<void>
+  verifyPayment: (id: string) => Promise<void>
+  rejectPayment: (id: string) => Promise<void>
   newOrderToast: MiniMartOrder | null
   dismissToast: () => void
 }
@@ -56,11 +58,36 @@ export function MiniMartOrdersProvider({ children }: { children: ReactNode }) {
     [refresh],
   )
 
+  const verifyPayment = useCallback(
+    async (id: string) => {
+      await store.verifyMiniMartPayment(id)
+      await refresh()
+    },
+    [refresh],
+  )
+
+  const rejectPayment = useCallback(
+    async (id: string) => {
+      await store.rejectMiniMartPayment(id)
+      await refresh()
+    },
+    [refresh],
+  )
+
   const newOrderCount = orders.filter((o) => o.status === 'new').length
 
   return (
     <MiniMartOrdersContext.Provider
-      value={{ orders, loading, newOrderCount, updateStatus, newOrderToast, dismissToast: () => setNewOrderToast(null) }}
+      value={{
+        orders,
+        loading,
+        newOrderCount,
+        updateStatus,
+        verifyPayment,
+        rejectPayment,
+        newOrderToast,
+        dismissToast: () => setNewOrderToast(null),
+      }}
     >
       {children}
     </MiniMartOrdersContext.Provider>

@@ -1,13 +1,17 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSettings } from '../../../context/SettingsContext'
+import { store } from '../../../lib/store'
 import { formatDateLong, formatTime12h, formatTimeRange12h } from '../../../lib/time'
 import type { Booking } from '../../../types'
 import Button from '../../ui/Button'
 import Card from '../../ui/Card'
+import GcashPaymentSection from '../../payments/GcashPaymentSection'
 
 export default function ConfirmationStep({ booking, onBookAnother }: { booking: Booking; onBookAnother: () => void }) {
   const { settings } = useSettings()
   const navigate = useNavigate()
+  const [paymentStatus, setPaymentStatus] = useState(booking.paymentStatus)
 
   return (
     <div className="text-center">
@@ -32,23 +36,18 @@ export default function ConfirmationStep({ booking, onBookAnother }: { booking: 
       </Card>
 
       {booking.paymentMethod === 'gcash' && (
-        <Card className="mt-4 p-5 text-left">
-          <p className="mb-2 font-display text-sm font-bold uppercase tracking-wide text-lime-500">GCash Payment Instructions</p>
-          <div className="space-y-1.5 text-sm">
-            <Row label="GCash Number" value={settings.gcashNumber} />
-            <Row label="Account Name" value={settings.gcashAccountName} />
-          </div>
-          {settings.gcashQrCodeUrl && (
-            <img
-              src={settings.gcashQrCodeUrl}
-              alt="GCash QR code"
-              className="mx-auto mt-4 h-48 w-48 rounded-xl border border-white/10 bg-white object-contain p-2"
-            />
-          )}
-          <p className="mt-3 text-xs text-cream-dim">
-            Please send ₱{booking.totalAmount} and keep your reference number. Your booking will be marked paid once confirmed by the court staff.
-          </p>
-        </Card>
+        <GcashPaymentSection
+          amount={booking.totalAmount}
+          paymentStatus={paymentStatus}
+          gcashNumber={settings.gcashNumber}
+          gcashAccountName={settings.gcashAccountName}
+          gcashQrCodeUrl={settings.gcashQrCodeUrl}
+          onSubmitProof={async (proofUrl) => {
+            const result = await store.submitBookingPaymentProof(booking.id, booking.mobileNumber, proofUrl)
+            if (result.success) setPaymentStatus('pending')
+            return result
+          }}
+        />
       )}
 
       <div className="mt-6 flex flex-col gap-3">

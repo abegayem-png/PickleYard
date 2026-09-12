@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { store } from '../../lib/store'
 import { getErrorMessage } from '../../lib/errors'
-import type { MiniMartItem, PlaceOrderResult } from '../../types'
+import { useSettings } from '../../context/SettingsContext'
+import GcashPaymentSection from '../payments/GcashPaymentSection'
+import type { MiniMartItem, PaymentMethod, PlaceOrderResult } from '../../types'
 import Button from '../ui/Button'
 
 export interface CartLine {
@@ -20,8 +22,10 @@ export default function OrderSummaryModal({
   onClose: () => void
   onNewOrder: () => void
 }) {
+  const { settings } = useSettings()
   const [customerName, setCustomerName] = useState('')
   const [notes, setNotes] = useState('')
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [placed, setPlaced] = useState<PlaceOrderResult | null>(null)
@@ -39,6 +43,7 @@ export default function OrderSummaryModal({
         customerName: customerName.trim(),
         notes: notes.trim() || undefined,
         items: lines.map((l) => ({ itemId: l.item.id, quantity: l.quantity })),
+        paymentMethod,
       })
       if (!result.success) {
         setError(result.reason || 'Could not place your order. Please try again.')
@@ -57,7 +62,7 @@ export default function OrderSummaryModal({
     setCheckingStatus(true)
     try {
       const lookup = await store.getMiniMartOrderStatus(placed.orderNumber)
-      if (lookup) setPlaced((p) => (p ? { ...p, status: lookup.status, total: lookup.total } : p))
+      if (lookup) setPlaced((p) => (p ? { ...p, status: lookup.status, total: lookup.total, paymentStatus: lookup.paymentStatus } : p))
     } catch {
       // Status refresh is best-effort — keep showing whatever we already have.
     } finally {
@@ -86,7 +91,22 @@ export default function OrderSummaryModal({
               </div>
             </div>
 
-            <p className="mt-4 text-sm text-cream-dim">Please wait while we prepare your order.</p>
+            {paymentMethod === 'gcash' && placed.paymentStatus ? (
+              <GcashPaymentSection
+                amount={placed.total}
+                paymentStatus={placed.paymentStatus}
+                gcashNumber={settings.gcashNumber}
+                gcashAccountName={settings.gcashAccountName}
+                gcashQrCodeUrl={settings.gcashQrCodeUrl}
+                onSubmitProof={async (proofUrl) => {
+                  const result = await store.submitMiniMartPaymentProof(placed.orderNumber!, proofUrl)
+                  if (result.success) setPlaced((p) => (p ? { ...p, paymentStatus: 'pending' } : p))
+                  return result
+                }}
+              />
+            ) : (
+              <p className="mt-4 text-sm text-cream-dim">Please wait while we prepare your order.</p>
+            )}
 
             <Button fullWidth size="lg" className="mt-5" onClick={onNewOrder}>
               Start New Order
@@ -146,6 +166,34 @@ export default function OrderSummaryModal({
                   placeholder="Add a note…"
                   className="w-full resize-none rounded-xl border border-white/10 bg-court-800 px-3 py-2 text-sm text-cream placeholder:text-cream-dim/50 focus:border-lime-500/50 focus:outline-none"
                 />
+              </label>
+
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-semibold text-cream-dim">Payment Method</span>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod('cash')}
+                    className={`h-12 rounded-xl border font-display font-bold transition active:scale-95 ${
+                      paymentMethod === 'cash'
+                        ? 'border-lime-500 bg-lime-500/10 text-lime-400'
+                        : 'border-white/10 bg-court-800 text-cream hover:bg-court-700'
+                    }`}
+                  >
+                    Cash on Pickup
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod('gcash')}
+                    className={`h-12 rounded-xl border font-display font-bold transition active:scale-95 ${
+                      paymentMethod === 'gcash'
+                        ? 'border-lime-500 bg-lime-500/10 text-lime-400'
+                        : 'border-white/10 bg-court-800 text-cream hover:bg-court-700'
+                    }`}
+                  >
+                    GCash
+                  </button>
+                </div>
               </label>
             </div>
 

@@ -35,7 +35,7 @@ export function useAdminData() {
 
   const markPaid = useCallback(
     async (id: string) => {
-      await store.updateBookingPayment(id, 'paid')
+      await store.updateBookingPayment(id, 'verified')
       await refresh()
     },
     [refresh],
@@ -44,6 +44,22 @@ export function useAdminData() {
   const markUnpaid = useCallback(
     async (id: string) => {
       await store.updateBookingPayment(id, 'unpaid')
+      await refresh()
+    },
+    [refresh],
+  )
+
+  const verifyPayment = useCallback(
+    async (id: string) => {
+      await store.verifyBookingPayment(id)
+      await refresh()
+    },
+    [refresh],
+  )
+
+  const rejectPayment = useCallback(
+    async (id: string) => {
+      await store.rejectBookingPayment(id)
       await refresh()
     },
     [refresh],
@@ -82,6 +98,8 @@ export function useAdminData() {
     cancelBooking,
     markPaid,
     markUnpaid,
+    verifyPayment,
+    rejectPayment,
     deleteBooking,
     addBlockedSlot,
     removeBlockedSlot,

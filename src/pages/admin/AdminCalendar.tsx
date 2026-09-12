@@ -84,7 +84,7 @@ export default function AdminCalendar() {
         return slotStart < bEnd && bStart < slotEnd
       })
       if (booking) {
-        const status: SlotStatus = booking.paymentStatus === 'paid' ? 'paid' : booking.status === 'confirmed' ? 'confirmed' : 'pending'
+        const status: SlotStatus = booking.paymentStatus === 'verified' ? 'paid' : booking.status === 'confirmed' ? 'confirmed' : 'pending'
         return { hour: h, status, detail: `${booking.customerName} · ${booking.bookingReference}` }
       }
 

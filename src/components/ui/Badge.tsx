@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 
-type Tone = 'lime' | 'cream' | 'pending' | 'confirmed' | 'paid' | 'unpaid' | 'blocked' | 'cancelled'
+type Tone = 'lime' | 'cream' | 'pending' | 'confirmed' | 'paid' | 'unpaid' | 'blocked' | 'cancelled' | 'rejected'
 
 const toneClasses: Record<Tone, string> = {
   lime: 'bg-lime-500 text-court-950',
@@ -11,6 +11,7 @@ const toneClasses: Record<Tone, string> = {
   unpaid: 'bg-amber-400/20 text-amber-300',
   blocked: 'bg-red-400/20 text-red-300',
   cancelled: 'bg-white/10 text-cream-dim',
+  rejected: 'bg-red-400/20 text-red-300',
 }
 
 export default function Badge({ tone = 'cream', children }: { tone?: Tone; children: ReactNode }) {
