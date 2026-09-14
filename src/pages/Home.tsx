@@ -8,6 +8,7 @@ import LocationSection from '../components/home/LocationSection'
 import ContactSection from '../components/home/ContactSection'
 import OpenPlaySection from '../components/home/OpenPlaySection'
 import OpenPlayBanner from '../components/home/OpenPlayBanner'
+import FreePlaySection from '../components/home/FreePlaySection'
 import PromoBanner from '../components/home/PromoBanner'
 import BookingWidget from '../components/booking/BookingWidget'
 
@@ -28,6 +29,7 @@ export default function Home() {
         </div>
       </section>
 
+      <FreePlaySection />
       <RatesSection />
       <OpenPlaySection />
       <HowToBook />
