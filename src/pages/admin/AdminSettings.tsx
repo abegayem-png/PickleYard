@@ -7,6 +7,41 @@ import { Section, TextField, NumberField, TimeField } from '../../components/adm
 import OpenPlaySettingsPanel from '../../components/admin/OpenPlaySettingsPanel'
 import { getErrorMessage, logError } from '../../lib/errors'
 
+/** Large (200-300px), aspect-ratio-preserving QR preview with real load-failure
+ *  handling — a broken/private-bucket URL shows a clear admin message and logs
+ *  the actual browser error, instead of silently rendering as a tiny broken-
+ *  image icon (which is what a private bucket or bad path looks like). */
+function QrPreview({ url, alt }: { url: string; alt: string }) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null)
+  const failed = failedUrl === url
+
+  if (!url) {
+    return (
+      <div className="grid h-56 w-56 max-w-full place-items-center rounded-xl bg-white text-3xl">📷</div>
+    )
+  }
+
+  if (failed) {
+    return (
+      <div className="grid h-56 w-56 max-w-full place-items-center rounded-xl border border-red-400/30 bg-red-400/10 p-3 text-center text-xs font-semibold text-red-300">
+        QR image could not be loaded. Check Storage permissions or saved path.
+      </div>
+    )
+  }
+
+  return (
+    <img
+      src={url}
+      alt={alt}
+      className="h-56 w-56 max-w-full rounded-xl border border-white/10 bg-white object-contain p-2"
+      onError={(e) => {
+        logError(`Failed to load QR preview (${alt}):`, { url, event: e })
+        setFailedUrl(url)
+      }}
+    />
+  )
+}
+
 export default function AdminSettings() {
   const { settings, updateSettings } = useSettings()
   const [form, setForm] = useState<Settings>(settings)
@@ -198,15 +233,9 @@ export default function AdminSettings() {
 
         <div>
           <span className="mb-1.5 block text-sm font-semibold text-cream-dim">GCash QR</span>
-          <div className="flex items-center gap-3">
-            <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-xl bg-white">
-              {form.gcashQrCodeUrl ? (
-                <img src={form.gcashQrCodeUrl} alt="GCash QR code" className="h-full w-full object-contain p-1" />
-              ) : (
-                <span className="text-2xl">📷</span>
-              )}
-            </div>
-            <div className="flex-1 space-y-2">
+          <div className="flex flex-wrap items-start gap-4">
+            <QrPreview url={form.gcashQrCodeUrl} alt="GCash QR code" />
+            <div className="min-w-[200px] flex-1 space-y-2">
               <TextField label="" value={form.gcashQrCodeUrl} onChange={(v) => set('gcashQrCodeUrl', v)} />
               {isSupabaseConfigured && (
                 <>
@@ -241,15 +270,9 @@ export default function AdminSettings() {
       >
         <div>
           <span className="mb-1.5 block text-sm font-semibold text-cream-dim">Bank QR</span>
-          <div className="flex items-center gap-3">
-            <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-xl bg-white">
-              {form.bankQrCodeUrl ? (
-                <img src={form.bankQrCodeUrl} alt="Bank transfer QR code" className="h-full w-full object-contain p-1" />
-              ) : (
-                <span className="text-2xl">📷</span>
-              )}
-            </div>
-            <div className="flex-1 space-y-2">
+          <div className="flex flex-wrap items-start gap-4">
+            <QrPreview url={form.bankQrCodeUrl} alt="Bank transfer QR code" />
+            <div className="min-w-[200px] flex-1 space-y-2">
               <TextField label="" value={form.bankQrCodeUrl} onChange={(v) => set('bankQrCodeUrl', v)} />
               {isSupabaseConfigured && (
                 <>

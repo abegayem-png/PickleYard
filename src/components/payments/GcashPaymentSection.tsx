@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { getErrorMessage } from '../../lib/errors'
+import { getErrorMessage, logError } from '../../lib/errors'
 import { isAcceptedProofFile, uploadPaymentProof } from '../../lib/paymentProofStorage'
 import type { PaymentStatus } from '../../types'
 import Button from '../ui/Button'
@@ -27,6 +27,7 @@ export default function GcashPaymentSection({
   const [preview, setPreview] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [qrLoadFailed, setQrLoadFailed] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
@@ -74,11 +75,20 @@ export default function GcashPaymentSection({
       <p className="text-center text-xs font-semibold uppercase tracking-wide text-cream-dim">Amount to Pay</p>
       <p className="text-center font-display text-3xl font-extrabold text-cream">₱{amount}</p>
 
-      {gcashQrCodeUrl && (
+      {gcashQrCodeUrl && qrLoadFailed && (
+        <div className="mx-auto mt-4 grid h-52 w-52 place-items-center rounded-xl border border-red-400/30 bg-red-400/10 p-3 text-center text-xs font-semibold text-red-300">
+          QR image could not be loaded. Please contact us to pay via GCash.
+        </div>
+      )}
+      {gcashQrCodeUrl && !qrLoadFailed && (
         <img
           src={gcashQrCodeUrl}
           alt="GCash QR code"
           className="mx-auto mt-4 h-52 w-52 rounded-xl border border-white/10 bg-white object-contain p-2"
+          onError={(e) => {
+            logError('Failed to load GCash QR image on checkout:', { url: gcashQrCodeUrl, event: e })
+            setQrLoadFailed(true)
+          }}
         />
       )}
       <div className="mt-3 space-y-1 text-center text-sm">

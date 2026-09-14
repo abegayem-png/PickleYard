@@ -1047,9 +1047,14 @@ create policy "admins can manage mini mart images" on storage.objects
 delete from storage.objects where bucket_id = 'payment-settings';
 delete from storage.buckets where id = 'payment-settings';
 
+-- `on conflict do nothing` would silently leave `public` at whatever a
+-- pre-existing bucket of this name already had (e.g. private, if it was
+-- ever created by hand or by an earlier partial run) — a private bucket's
+-- "public" URL 403s, which renders as a broken image in the QR preview.
+-- `do update set public = true` makes this self-healing on every re-run.
 insert into storage.buckets (id, name, public)
 values ('payment-qr-codes', 'payment-qr-codes', true)
-on conflict (id) do nothing;
+on conflict (id) do update set public = true;
 
 drop policy if exists "public can view payment settings images" on storage.objects;
 drop policy if exists "admins can manage payment settings images" on storage.objects;
