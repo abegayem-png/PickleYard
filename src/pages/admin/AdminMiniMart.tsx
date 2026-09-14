@@ -1,11 +1,12 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useMiniMartItems } from '../../hooks/useMiniMartItems'
 import { uploadMiniMartImage } from '../../lib/miniMartStorage'
 import { isSupabaseConfigured } from '../../lib/supabaseClient'
 import { getErrorMessage } from '../../lib/errors'
-import { isEffectivelyAvailable, isLowStock } from '../../lib/miniMartStock'
-import { MINI_MART_CATEGORIES, MINI_MART_CATEGORY_LABELS } from '../../types'
-import type { MiniMartCategory, MiniMartItem, MiniMartItemInput } from '../../types'
+import { isEffectivelyAvailable, isLowStock, isOutOfStock } from '../../lib/miniMartStock'
+import { MANUAL_STOCK_REASONS, MINI_MART_CATEGORIES, MINI_MART_CATEGORY_LABELS, MINI_MART_INVENTORY_REASON_LABELS } from '../../types'
+import type { MiniMartCategory, MiniMartInventoryReason, MiniMartItem, MiniMartItemInput } from '../../types'
 import Badge from '../../components/ui/Badge'
 import Button from '../../components/ui/Button'
 import Card from '../../components/ui/Card'
@@ -19,13 +20,39 @@ const EMPTY_FORM: MiniMartItemInput = {
   imageUrl: '',
   isAvailable: true,
   stockQuantity: 0,
+  servingSize: '',
 }
+
+type ProductFilter = 'all' | 'low_stock' | 'out_of_stock' | MiniMartCategory
+
+const FILTER_OPTIONS: { value: ProductFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'low_stock', label: 'Low Stock' },
+  { value: 'out_of_stock', label: 'Out of Stock' },
+  ...MINI_MART_CATEGORIES.map((c) => ({ value: c, label: MINI_MART_CATEGORY_LABELS[c] })),
+]
 
 export default function AdminMiniMart() {
   const mart = useMiniMartItems()
   const [creating, setCreating] = useState(false)
+  const [filter, setFilter] = useState<ProductFilter>('all')
 
-  const lowStockItems = mart.items.filter(isLowStock)
+  const totalProducts = mart.items.length
+  const lowStockCount = mart.items.filter(isLowStock).length
+  const outOfStockCount = mart.items.filter(isOutOfStock).length
+
+  const visibleItems = useMemo(() => {
+    switch (filter) {
+      case 'all':
+        return mart.items
+      case 'low_stock':
+        return mart.items.filter(isLowStock)
+      case 'out_of_stock':
+        return mart.items.filter(isOutOfStock)
+      default:
+        return mart.items.filter((i) => i.category === filter)
+    }
+  }, [mart.items, filter])
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -34,23 +61,48 @@ export default function AdminMiniMart() {
           <h1 className="font-display text-2xl font-extrabold text-cream">Mini Mart</h1>
           <p className="text-sm text-cream-dim">Manage products shown on the public Mini Mart page.</p>
         </div>
-        <Button size="md" onClick={() => setCreating((v) => !v)}>
-          {creating ? 'Close' : '+ New Product'}
-        </Button>
+        <div className="flex gap-2">
+          <Link
+            to="/admin/mini-mart/inventory"
+            className="rounded-lg bg-white/5 px-3 py-2 text-xs font-bold text-cream hover:bg-white/10"
+          >
+            Inventory History
+          </Link>
+          <Button size="md" onClick={() => setCreating((v) => !v)}>
+            {creating ? 'Close' : '+ New Product'}
+          </Button>
+        </div>
       </div>
 
-      {lowStockItems.length > 0 && (
-        <Card className="mb-4 border-amber-400/30 bg-amber-400/5 p-4">
-          <p className="font-display text-xs font-extrabold uppercase tracking-widest text-amber-400">Low Stock</p>
-          <div className="mt-2 space-y-1">
-            {lowStockItems.map((i) => (
-              <p key={i.id} className="text-sm text-cream">
-                {i.name} — {i.stockQuantity} left
-              </p>
-            ))}
-          </div>
+      <div className="mb-4 grid grid-cols-3 gap-3">
+        <Card className="p-4 text-center">
+          <p className="font-display text-2xl font-extrabold text-cream">{totalProducts}</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-cream-dim">Products</p>
         </Card>
-      )}
+        <Card className="p-4 text-center">
+          <p className="font-display text-2xl font-extrabold text-amber-400">{lowStockCount}</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-cream-dim">Low Stock</p>
+        </Card>
+        <Card className="p-4 text-center">
+          <p className="font-display text-2xl font-extrabold text-red-400">{outOfStockCount}</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-cream-dim">Out of Stock</p>
+        </Card>
+      </div>
+
+      <div className="no-scrollbar mb-4 flex gap-2 overflow-x-auto pb-1">
+        {FILTER_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => setFilter(opt.value)}
+            className={`shrink-0 rounded-full px-3.5 py-2 text-xs font-bold transition ${
+              filter === opt.value ? 'bg-lime-500 text-court-950' : 'bg-white/5 text-cream-dim hover:bg-white/10 hover:text-cream'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
 
       {creating && (
         <Card className="mb-4 p-5">
@@ -68,11 +120,11 @@ export default function AdminMiniMart() {
 
       {mart.loading ? (
         <p className="text-cream-dim">Loading…</p>
-      ) : mart.items.length === 0 ? (
-        <p className="text-sm text-cream-dim">No products yet.</p>
+      ) : visibleItems.length === 0 ? (
+        <p className="text-sm text-cream-dim">{mart.items.length === 0 ? 'No products yet.' : 'No products match this filter.'}</p>
       ) : (
         <div className="space-y-3">
-          {mart.items.map((item) => (
+          {visibleItems.map((item) => (
             <ProductRow key={item.id} item={item} onUpdate={mart.updateItem} onDelete={mart.deleteItem} onAdjustStock={mart.adjustStock} />
           ))}
         </div>
@@ -90,7 +142,7 @@ function ProductRow({
   item: MiniMartItem
   onUpdate: (id: string, patch: Partial<MiniMartItemInput>) => Promise<void>
   onDelete: (id: string) => Promise<void>
-  onAdjustStock: (id: string, delta: number) => Promise<void>
+  onAdjustStock: (id: string, delta: number, reason?: MiniMartInventoryReason, notes?: string) => Promise<void>
 }) {
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -98,8 +150,15 @@ function ProductRow({
   const [setStockValue, setSetStockValue] = useState(String(item.stockQuantity))
   const [stockError, setStockError] = useState<string | null>(null)
 
+  const [adjustQty, setAdjustQty] = useState('1')
+  const [adjustReason, setAdjustReason] = useState<MiniMartInventoryReason>('walk_in_sale')
+  const [adjustNotes, setAdjustNotes] = useState('')
+  const [adjustBusy, setAdjustBusy] = useState<'add' | 'remove' | null>(null)
+  const [adjustError, setAdjustError] = useState<string | null>(null)
+
   const available = isEffectivelyAvailable(item)
   const lowStock = isLowStock(item)
+  const outOfStock = isOutOfStock(item)
 
   async function handleDelete() {
     if (!confirm(`Delete "${item.name}"? This cannot be undone.`)) return
@@ -140,6 +199,26 @@ function ProductRow({
     }
   }
 
+  async function handleAdjustStockSubmit(direction: 'add' | 'remove') {
+    const qty = Number(adjustQty)
+    if (!Number.isFinite(qty) || !Number.isInteger(qty) || qty <= 0) {
+      setAdjustError('Enter a whole number greater than 0.')
+      return
+    }
+    setAdjustBusy(direction)
+    setAdjustError(null)
+    try {
+      const delta = direction === 'add' ? qty : -qty
+      await onAdjustStock(item.id, delta, adjustReason, adjustNotes.trim() || undefined)
+      setAdjustQty('1')
+      setAdjustNotes('')
+    } catch (err) {
+      setAdjustError(getErrorMessage(err, 'Failed to adjust stock.'))
+    } finally {
+      setAdjustBusy(null)
+    }
+  }
+
   return (
     <Card className="p-4">
       <div className="flex items-start justify-between gap-3">
@@ -154,11 +233,12 @@ function ProductRow({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <p className="truncate font-display font-bold text-cream">{item.name}</p>
-              <Badge tone={available ? 'confirmed' : 'blocked'}>{available ? 'Available' : 'Sold Out'}</Badge>
+              <Badge tone={available ? 'confirmed' : 'blocked'}>{outOfStock ? 'Sold Out' : available ? 'Available' : 'Hidden'}</Badge>
               {lowStock && <Badge tone="pending">Low Stock</Badge>}
             </div>
             <p className="text-sm text-cream-dim">
-              ₱{item.price} · {MINI_MART_CATEGORY_LABELS[item.category]} · Stock: {item.stockQuantity}
+              ₱{item.price}
+              {item.servingSize && ` · ${item.servingSize}`} · {MINI_MART_CATEGORY_LABELS[item.category]} · Stock: {item.stockQuantity}
             </p>
           </div>
         </div>
@@ -168,7 +248,7 @@ function ProductRow({
             disabled={busy}
             className="rounded-lg bg-white/5 px-3 py-1.5 text-xs font-bold text-cream hover:bg-white/10"
           >
-            {item.isAvailable ? 'Mark Sold Out' : 'Mark Available'}
+            {item.isAvailable ? 'Hide' : 'Unhide'}
           </button>
           <button
             onClick={() => setEditing((v) => !v)}
@@ -187,7 +267,15 @@ function ProductRow({
       </div>
 
       <div className="mt-4 border-t border-white/10 pt-4">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-cream-dim">Stock: {item.stockQuantity}</p>
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-xs font-semibold uppercase tracking-wide text-cream-dim">Current Stock: {item.stockQuantity}</p>
+          <Link
+            to={`/admin/mini-mart/inventory?item=${item.id}`}
+            className="text-xs font-bold text-lime-500 hover:text-lime-400"
+          >
+            View History
+          </Link>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => handleAdjust(-5)}
@@ -238,6 +326,61 @@ function ProductRow({
         {stockError && <p className="mt-2 text-xs text-red-400">{stockError}</p>}
       </div>
 
+      <div className="mt-4 border-t border-white/10 pt-4">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-cream-dim">Adjust Stock</p>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-semibold text-cream-dim">Quantity</span>
+            <input
+              type="number"
+              min={1}
+              value={adjustQty}
+              onChange={(e) => setAdjustQty(e.target.value)}
+              className="h-9 w-20 rounded-lg border border-white/10 bg-court-800 px-2 text-sm text-cream focus:border-lime-500/50 focus:outline-none"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-semibold text-cream-dim">Reason</span>
+            <select
+              value={adjustReason}
+              onChange={(e) => setAdjustReason(e.target.value as MiniMartInventoryReason)}
+              className="h-9 rounded-lg border border-white/10 bg-court-800 px-2 text-sm text-cream focus:border-lime-500/50 focus:outline-none"
+            >
+              {MANUAL_STOCK_REASONS.map((r) => (
+                <option key={r} value={r}>
+                  {MINI_MART_INVENTORY_REASON_LABELS[r]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block min-w-[10rem] flex-1">
+            <span className="mb-1 block text-[11px] font-semibold text-cream-dim">Notes (optional)</span>
+            <input
+              type="text"
+              value={adjustNotes}
+              onChange={(e) => setAdjustNotes(e.target.value)}
+              placeholder="e.g. dropped case of bottles"
+              className="h-9 w-full rounded-lg border border-white/10 bg-court-800 px-2 text-sm text-cream focus:border-lime-500/50 focus:outline-none"
+            />
+          </label>
+          <button
+            onClick={() => handleAdjustStockSubmit('add')}
+            disabled={adjustBusy !== null}
+            className="h-9 rounded-lg bg-lime-500/10 px-3 text-sm font-bold text-lime-400 hover:bg-lime-500/20 disabled:opacity-40"
+          >
+            {adjustBusy === 'add' ? 'Adding…' : 'ADD STOCK'}
+          </button>
+          <button
+            onClick={() => handleAdjustStockSubmit('remove')}
+            disabled={adjustBusy !== null || item.stockQuantity === 0}
+            className="h-9 rounded-lg bg-red-400/10 px-3 text-sm font-bold text-red-300 hover:bg-red-400/20 disabled:opacity-40"
+          >
+            {adjustBusy === 'remove' ? 'Removing…' : 'REMOVE STOCK'}
+          </button>
+        </div>
+        {adjustError && <p className="mt-2 text-xs text-red-400">{adjustError}</p>}
+      </div>
+
       {editing && (
         <div className="mt-4 border-t border-white/10 pt-4">
           <ProductForm
@@ -249,6 +392,7 @@ function ProductRow({
               imageUrl: item.imageUrl,
               isAvailable: item.isAvailable,
               stockQuantity: item.stockQuantity,
+              servingSize: item.servingSize,
             }}
             onSubmit={async (input) => {
               await onUpdate(item.id, input)
@@ -313,7 +457,7 @@ function ProductForm({
     setBusy(true)
     setError(null)
     try {
-      await onSubmit({ ...form, name: form.name.trim(), description: form.description.trim() })
+      await onSubmit({ ...form, name: form.name.trim(), description: form.description.trim(), servingSize: form.servingSize.trim() })
     } catch (err) {
       setError(getErrorMessage(err, 'Failed to save product.'))
     } finally {
@@ -353,7 +497,10 @@ function ProductForm({
         </label>
       </div>
 
-      <NumberField label="Stock Quantity" value={form.stockQuantity} onChange={(v) => set('stockQuantity', Math.trunc(v))} />
+      <div className="grid grid-cols-2 gap-4">
+        <TextField label="Quantity / Serving Size" value={form.servingSize} onChange={(v) => set('servingSize', v)} />
+        <NumberField label="Stock Quantity" value={form.stockQuantity} onChange={(v) => set('stockQuantity', Math.trunc(v))} />
+      </div>
 
       <div>
         <span className="mb-1.5 block text-sm font-semibold text-cream-dim">Product Photo</span>

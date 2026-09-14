@@ -21,6 +21,8 @@ import type {
   PlaceMiniMartOrderInput,
   PlaceOrderResult,
   MiniMartOrderStatusLookup,
+  MiniMartInventoryLog,
+  MiniMartInventoryReason,
 } from '../../types'
 
 /** Lightweight shape used only for availability/pricing checks — no customer PII. */
@@ -106,8 +108,17 @@ export interface DataStore {
   updateMiniMartItem(id: string, patch: Partial<MiniMartItemInput>): Promise<MiniMartItem>
   deleteMiniMartItem(id: string): Promise<void>
   /** Atomic relative stock change (clamped at 0) — safe against stale reads,
-   *  used by the admin's quick +1/+5/-1/-5 buttons. */
-  adjustMiniMartItemStock(id: string, delta: number): Promise<MiniMartItem>
+   *  used by the admin's quick +1/+5/-1/-5 buttons and the reason-based
+   *  Adjust Stock panel. Every call is logged (see mini_mart_inventory_logs). */
+  adjustMiniMartItemStock(
+    id: string,
+    delta: number,
+    reason?: MiniMartInventoryReason,
+    notes?: string,
+  ): Promise<MiniMartItem>
+
+  /** Admin: full stock-change history, newest first. Optionally scoped to one product. */
+  listMiniMartInventoryLogs(itemId?: string): Promise<MiniMartInventoryLog[]>
 
   /** Trusted order placement — recalculates pricing from mini_mart_items server-side. */
   placeMiniMartOrder(input: PlaceMiniMartOrderInput): Promise<PlaceOrderResult>

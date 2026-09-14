@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { store } from '../lib/store'
-import type { MiniMartItem, MiniMartItemInput } from '../types'
+import type { MiniMartItem, MiniMartItemInput, MiniMartInventoryReason } from '../types'
 
 export function useMiniMartItems() {
   const [items, setItems] = useState<MiniMartItem[]>([])
@@ -41,8 +41,8 @@ export function useMiniMartItems() {
   )
 
   const adjustStock = useCallback(
-    async (id: string, delta: number) => {
-      await store.adjustMiniMartItemStock(id, delta)
+    async (id: string, delta: number, reason?: MiniMartInventoryReason, notes?: string) => {
+      await store.adjustMiniMartItemStock(id, delta, reason, notes)
       await refresh()
     },
     [refresh],

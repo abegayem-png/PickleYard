@@ -12,6 +12,8 @@ import type {
   MiniMartOrder,
   MiniMartOrderItem,
   MiniMartOrderStatus,
+  MiniMartInventoryLog,
+  MiniMartInventoryReason,
 } from '../../types'
 import { DEFAULT_SETTINGS } from '../../types'
 import { calculatePrice, generateBookingReference } from '../pricing'
@@ -29,6 +31,7 @@ const KEYS = {
   miniMartItems: 'pkl_mini_mart_items',
   miniMartOrders: 'pkl_mini_mart_orders',
   miniMartOrderSeq: 'pkl_mini_mart_order_seq',
+  miniMartInventoryLogs: 'pkl_mini_mart_inventory_logs',
 }
 
 function nextMiniMartOrderNumber(): string {
@@ -36,6 +39,38 @@ function nextMiniMartOrderNumber(): string {
   const next = current + 1
   localStorage.setItem(KEYS.miniMartOrderSeq, String(next))
   return `PY-${next}`
+}
+
+/** Demo-mode mirror of the Supabase trigger (log_mini_mart_stock_change): every
+ *  stock_quantity change is logged here, whatever the source, so the admin's
+ *  Inventory History page behaves the same with or without Supabase. */
+function logMiniMartStockChange(entry: {
+  item: MiniMartItem
+  changeQuantity: number
+  previousStock: number
+  reason: MiniMartInventoryReason
+  orderId?: string | null
+  orderNumber?: string | null
+  notes?: string
+  createdBy?: string | null
+}) {
+  if (entry.changeQuantity === 0) return
+  const logs = read<MiniMartInventoryLog[]>(KEYS.miniMartInventoryLogs, [])
+  logs.push({
+    id: newId(),
+    itemId: entry.item.id,
+    itemName: entry.item.name,
+    changeQuantity: entry.changeQuantity,
+    previousStock: entry.previousStock,
+    newStock: entry.previousStock + entry.changeQuantity,
+    reason: entry.reason,
+    orderId: entry.orderId ?? null,
+    orderNumber: entry.orderNumber ?? null,
+    notes: entry.notes ?? '',
+    createdBy: entry.createdBy ?? null,
+    createdAt: new Date().toISOString(),
+  })
+  write(KEYS.miniMartInventoryLogs, logs)
 }
 
 // Demo-mode-only seed so the Mini Mart page isn't empty on first load. Real
@@ -50,6 +85,7 @@ const DEFAULT_MINI_MART_ITEMS: MiniMartItem[] = [
     imageUrl: '',
     isAvailable: true,
     stockQuantity: 24,
+    servingSize: '1 bottle',
     createdAt: new Date(0).toISOString(),
     updatedAt: new Date(0).toISOString(),
   },
@@ -62,6 +98,7 @@ const DEFAULT_MINI_MART_ITEMS: MiniMartItem[] = [
     imageUrl: '',
     isAvailable: true,
     stockQuantity: 12,
+    servingSize: '1 piece',
     createdAt: new Date(0).toISOString(),
     updatedAt: new Date(0).toISOString(),
   },
@@ -74,6 +111,7 @@ const DEFAULT_MINI_MART_ITEMS: MiniMartItem[] = [
     imageUrl: '',
     isAvailable: true,
     stockQuantity: 30,
+    servingSize: '500ml',
     createdAt: new Date(0).toISOString(),
     updatedAt: new Date(0).toISOString(),
   },
@@ -535,8 +573,20 @@ export const localStore: DataStore = {
     const items = read<MiniMartItem[]>(KEYS.miniMartItems, DEFAULT_MINI_MART_ITEMS)
     const idx = items.findIndex((i) => i.id === id)
     if (idx === -1) throw new Error('Mini Mart item not found')
+    const previousStock = items[idx].stockQuantity
     items[idx] = { ...items[idx], ...patch, updatedAt: new Date().toISOString() }
     write(KEYS.miniMartItems, items)
+    // Mirrors the Supabase trigger: any direct stock edit (e.g. the "Set
+    // Stock" absolute-value box) is logged too, not just the +1/+5/-1/-5
+    // buttons and the reason-based Adjust Stock panel.
+    if (patch.stockQuantity !== undefined && patch.stockQuantity !== previousStock) {
+      logMiniMartStockChange({
+        item: items[idx],
+        changeQuantity: patch.stockQuantity - previousStock,
+        previousStock,
+        reason: 'correction',
+      })
+    }
     return items[idx]
   },
 
@@ -548,17 +598,29 @@ export const localStore: DataStore = {
     )
   },
 
-  async adjustMiniMartItemStock(id, delta) {
+  async adjustMiniMartItemStock(id, delta, reason = 'correction', notes) {
     const items = read<MiniMartItem[]>(KEYS.miniMartItems, DEFAULT_MINI_MART_ITEMS)
     const idx = items.findIndex((i) => i.id === id)
     if (idx === -1) throw new Error('Mini Mart item not found')
-    items[idx] = {
-      ...items[idx],
-      stockQuantity: Math.max(0, items[idx].stockQuantity + delta),
-      updatedAt: new Date().toISOString(),
-    }
+    const previousStock = items[idx].stockQuantity
+    const newStock = Math.max(0, previousStock + delta)
+    items[idx] = { ...items[idx], stockQuantity: newStock, updatedAt: new Date().toISOString() }
     write(KEYS.miniMartItems, items)
+    logMiniMartStockChange({
+      item: items[idx],
+      // The actual change may be smaller than `delta` if it was clamped at 0.
+      changeQuantity: newStock - previousStock,
+      previousStock,
+      reason,
+      notes,
+    })
     return items[idx]
+  },
+
+  async listMiniMartInventoryLogs(itemId) {
+    const logs = read<MiniMartInventoryLog[]>(KEYS.miniMartInventoryLogs, [])
+    const filtered = itemId ? logs.filter((l) => l.itemId === itemId) : logs
+    return [...filtered].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   },
 
   async placeMiniMartOrder(input) {
@@ -631,7 +693,17 @@ export const localStore: DataStore = {
     // its time slot before payment is verified.
     const updatedProducts = products.map((p) => {
       const line = orderItems.find((oi) => oi.itemId === p.id)
-      return line ? { ...p, stockQuantity: p.stockQuantity - line.quantity, updatedAt: now } : p
+      if (!line) return p
+      const updated = { ...p, stockQuantity: p.stockQuantity - line.quantity, updatedAt: now }
+      logMiniMartStockChange({
+        item: updated,
+        changeQuantity: -line.quantity,
+        previousStock: p.stockQuantity,
+        reason: 'order',
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+      })
+      return updated
     })
     write(KEYS.miniMartItems, updatedProducts)
 
@@ -709,9 +781,20 @@ export const localStore: DataStore = {
     // 'cancelled', never if it's already cancelled (or already completed).
     if (status === 'cancelled' && previousStatus !== 'cancelled' && previousStatus !== 'completed') {
       const products = read<MiniMartItem[]>(KEYS.miniMartItems, DEFAULT_MINI_MART_ITEMS)
+      const now = new Date().toISOString()
       const restored = products.map((p) => {
         const line = orders[idx].items.find((oi) => oi.itemId === p.id)
-        return line ? { ...p, stockQuantity: p.stockQuantity + line.quantity, updatedAt: new Date().toISOString() } : p
+        if (!line) return p
+        const updated = { ...p, stockQuantity: p.stockQuantity + line.quantity, updatedAt: now }
+        logMiniMartStockChange({
+          item: updated,
+          changeQuantity: line.quantity,
+          previousStock: p.stockQuantity,
+          reason: 'cancellation',
+          orderId: orders[idx].id,
+          orderNumber: orders[idx].orderNumber,
+        })
+        return updated
       })
       write(KEYS.miniMartItems, restored)
     }

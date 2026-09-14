@@ -33,6 +33,7 @@ export default function ProductCard({
 
       <div className="p-3">
         <p className="truncate font-display font-bold text-cream">{item.name}</p>
+        {item.servingSize && <p className="mt-0.5 text-xs text-cream-dim">{item.servingSize}</p>}
         {item.description && <p className="mt-0.5 line-clamp-2 text-xs text-cream-dim">{item.description}</p>}
         <div className="mt-2 flex items-center justify-between">
           <p className="font-display text-lg font-extrabold text-lime-500">₱{item.price}</p>

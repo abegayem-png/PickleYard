@@ -551,6 +551,7 @@ create table if not exists settings (
   gcash_number text not null default '09XX XXX XXXX',
   gcash_account_name text not null default 'Set in Admin Settings',
   gcash_qr_code_url text not null default '',
+  bank_qr_code_url text not null default '',
   open_play_enabled boolean not null default false,
   open_play_schedule_type text not null default 'specific' check (open_play_schedule_type in ('specific', 'recurring')),
   open_play_recurring_days jsonb not null default '[]',
@@ -570,6 +571,7 @@ alter table settings add column if not exists maps_url text not null default '';
 alter table settings add column if not exists gcash_number text not null default '09XX XXX XXXX';
 alter table settings add column if not exists gcash_account_name text not null default 'Set in Admin Settings';
 alter table settings add column if not exists gcash_qr_code_url text not null default '';
+alter table settings add column if not exists bank_qr_code_url text not null default '';
 alter table settings add column if not exists open_play_enabled boolean not null default false;
 alter table settings add column if not exists open_play_schedule_type text not null default 'specific';
 alter table settings add column if not exists open_play_recurring_days jsonb not null default '[]';
@@ -901,6 +903,7 @@ create table if not exists mini_mart_items (
   image_url text not null default '',
   is_available boolean not null default true,
   stock_quantity integer not null default 0 check (stock_quantity >= 0),
+  serving_size text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -908,6 +911,7 @@ create table if not exists mini_mart_items (
 -- Defensive guard in case this table already existed from an earlier,
 -- partial version of this script — safe no-op if the column is present.
 alter table mini_mart_items add column if not exists stock_quantity integer not null default 0;
+alter table mini_mart_items add column if not exists serving_size text not null default '';
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'mini_mart_items_stock_quantity_check') then
     alter table mini_mart_items add constraint mini_mart_items_stock_quantity_check check (stock_quantity >= 0);
@@ -946,25 +950,61 @@ create policy "admins can manage mini mart items" on mini_mart_items
 grant select on mini_mart_items to anon;
 grant select, insert, update, delete on mini_mart_items to authenticated;
 
--- Atomic relative stock adjustment for the admin's quick +1/+5/-1/-5
--- buttons — updates `stock_quantity + p_delta` directly on the row rather
--- than the client reading a value and writing it back, so it can't clobber
--- a concurrent change (e.g. a customer order landing between the admin's
--- last fetch and their click). Clamped at 0. Admin-only.
-create or replace function adjust_mini_mart_stock(p_item_id uuid, p_delta integer)
+-- Atomic relative stock adjustment for the admin's quick +1/+5/-1/-5 buttons
+-- and the reason-based Adjust Stock panel — updates `stock_quantity +
+-- p_delta` directly on the row rather than the client reading a value and
+-- writing it back, so it can't clobber a concurrent change (e.g. a customer
+-- order landing between the admin's last fetch and their click). Clamped at
+-- 0. Admin-only (revoked from public/anon below).
+--
+-- p_reason/p_notes are handed to the logging trigger (see
+-- log_mini_mart_stock_change() below) via transaction-local session
+-- variables rather than an explicit parameter to that trigger, since a
+-- trigger function's signature is fixed by Postgres (`OLD`/`NEW` only) — this
+-- is the standard way to pass extra context through to a row-level trigger.
+-- `is_local => true` means these clear themselves at the end of this
+-- function's transaction, so they can never leak into an unrelated later
+-- statement.
+--
+-- The old 2-argument signature is dropped, not left behind: Postgres treats
+-- a different argument list as a different function, and the quick-button
+-- UI is being updated to pass a reason too (defaulting to 'correction'),
+-- same convention as place_mini_mart_order's signature history below.
+drop function if exists adjust_mini_mart_stock(uuid, integer);
+
+create or replace function adjust_mini_mart_stock(
+  p_item_id uuid,
+  p_delta integer,
+  p_reason text default 'correction',
+  p_notes text default null
+)
 returns integer
-language sql
+language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  updated_stock integer;
+begin
+  if p_reason not in ('walk_in_sale', 'restock', 'damaged', 'expired', 'correction', 'other') then
+    raise exception 'Invalid stock adjustment reason: %', p_reason;
+  end if;
+
+  perform set_config('mm.stock_reason', p_reason, true);
+  perform set_config('mm.stock_notes', coalesce(p_notes, ''), true);
+  perform set_config('mm.stock_created_by', coalesce(auth.email(), ''), true);
+
   update mini_mart_items
   set stock_quantity = greatest(0, stock_quantity + p_delta)
   where id = p_item_id
-  returning stock_quantity;
+  returning stock_quantity into updated_stock;
+
+  return updated_stock;
+end;
 $$;
 
-revoke all on function adjust_mini_mart_stock(uuid, integer) from public;
-grant execute on function adjust_mini_mart_stock(uuid, integer) to authenticated;
+revoke all on function adjust_mini_mart_stock(uuid, integer, text, text) from public;
+grant execute on function adjust_mini_mart_stock(uuid, integer, text, text) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Storage bucket for product photos. Public read (photos are shown on the
@@ -987,23 +1027,38 @@ create policy "admins can manage mini mart images" on storage.objects
   with check (bucket_id = 'mini-mart-images');
 
 -- ---------------------------------------------------------------------------
--- Storage bucket for the admin's GCash QR code. Public read (every customer
--- needs to see it to pay), admin-only write — same shape as mini-mart-images.
+-- Storage bucket for the admin's payment QR codes (GCash, Bank Transfer).
+-- Public read (every customer needs to see them to pay), admin-only write —
+-- same shape as mini-mart-images. Each QR lives at a fixed path
+-- (gcash/qr-code.<ext>, bank/qr-code.<ext>) so "Upload / Replace" overwrites
+-- the same object (upsert) instead of accumulating random files.
+--
+-- This replaces the earlier 'payment-settings' bucket, which the frontend
+-- was never actually able to write to in production (no bucket of that name
+-- ever existed there — "Bucket not found" on every upload attempt). Nothing
+-- was ever successfully stored in it, so it's safe to drop outright rather
+-- than leave it behind as a second, unused bucket.
 -- ---------------------------------------------------------------------------
+delete from storage.objects where bucket_id = 'payment-settings';
+delete from storage.buckets where id = 'payment-settings';
+
 insert into storage.buckets (id, name, public)
-values ('payment-settings', 'payment-settings', true)
+values ('payment-qr-codes', 'payment-qr-codes', true)
 on conflict (id) do nothing;
 
 drop policy if exists "public can view payment settings images" on storage.objects;
-create policy "public can view payment settings images" on storage.objects
-  for select to anon, authenticated
-  using (bucket_id = 'payment-settings');
-
 drop policy if exists "admins can manage payment settings images" on storage.objects;
-create policy "admins can manage payment settings images" on storage.objects
+
+drop policy if exists "public can view payment qr codes" on storage.objects;
+create policy "public can view payment qr codes" on storage.objects
+  for select to anon, authenticated
+  using (bucket_id = 'payment-qr-codes');
+
+drop policy if exists "admins can manage payment qr codes" on storage.objects;
+create policy "admins can manage payment qr codes" on storage.objects
   for all to authenticated
-  using (bucket_id = 'payment-settings')
-  with check (bucket_id = 'payment-settings');
+  using (bucket_id = 'payment-qr-codes')
+  with check (bucket_id = 'payment-qr-codes');
 
 -- ---------------------------------------------------------------------------
 -- Storage bucket for customer-uploaded GCash payment screenshots. PRIVATE —
@@ -1132,6 +1187,14 @@ create index if not exists mini_mart_order_items_order_idx on mini_mart_order_it
 -- client not to try).
 create or replace function restore_mini_mart_order_stock() returns trigger as $$
 begin
+  -- Tags every stock row this statement touches with 'cancellation' + the
+  -- order it came from, so log_mini_mart_stock_change() (below) records it
+  -- as a return rather than a generic correction. `is_local => true` scopes
+  -- it to this transaction, so it can't bleed into anything after.
+  perform set_config('mm.stock_reason', 'cancellation', true);
+  perform set_config('mm.stock_order_id', new.id::text, true);
+  perform set_config('mm.stock_order_number', new.order_number, true);
+
   update mini_mart_items m
   set stock_quantity = m.stock_quantity + oi.quantity
   from mini_mart_order_items oi
@@ -1250,6 +1313,15 @@ begin
   insert into mini_mart_orders (customer_name, notes, status, total, payment_method)
   values (trim(p_customer_name), nullif(trim(coalesce(p_notes, '')), ''), initial_status, computed_total, p_payment_method)
   returning id, order_number into new_order_id, new_order_number;
+
+  -- Tags every stock row the loop below touches with 'order' + this order,
+  -- so log_mini_mart_stock_change() (see the mini_mart_inventory_logs
+  -- section further down) records these deductions against it rather than
+  -- as a generic correction. `is_local => true` scopes it to this
+  -- transaction only.
+  perform set_config('mm.stock_reason', 'order', true);
+  perform set_config('mm.stock_order_id', new_order_id::text, true);
+  perform set_config('mm.stock_order_number', new_order_number, true);
 
   -- Only now, after the order itself exists, insert its line items and
   -- deduct stock — still inside the same transaction as the checks above.
@@ -1421,6 +1493,102 @@ begin
     alter publication supabase_realtime add table mini_mart_orders;
   end if;
 end $$;
+
+-- ---------------------------------------------------------------------------
+-- mini_mart_inventory_logs — an append-only audit trail of every
+-- stock_quantity change on mini_mart_items, whatever caused it: an online
+-- order, an order cancellation returning stock, or an admin's manual
+-- adjustment (quick +1/+5/-1/-5, the reason-based Adjust Stock panel, or a
+-- direct stock edit from the product form).
+--
+-- Deliberately NOT populated by application code calling `.insert()` — that
+-- would only guarantee logging for call sites that remember to do it. This
+-- table is instead written exclusively by a single AFTER UPDATE trigger on
+-- mini_mart_items (log_mini_mart_stock_change(), below), so *every* write
+-- to stock_quantity is captured no matter which code path changed it,
+-- including any future one. The trigger reads optional context
+-- (reason/order/notes/actor) from transaction-local session variables that
+-- place_mini_mart_order, restore_mini_mart_order_stock() and
+-- adjust_mini_mart_stock() set just before they touch stock_quantity —
+-- see the `set_config('mm.stock_*', ..., true)` calls upstream of each.
+-- A direct UPDATE from elsewhere (with no context set) still gets logged,
+-- just with reason='correction' and created_by falling back to auth.email().
+-- ---------------------------------------------------------------------------
+create table if not exists mini_mart_inventory_logs (
+  id uuid primary key default gen_random_uuid(),
+  item_id uuid references mini_mart_items (id) on delete set null,
+  -- Snapshot, not a join target: survives the product being renamed or
+  -- deleted later, so old history entries still read sensibly.
+  item_name text not null,
+  change_quantity integer not null,
+  previous_stock integer not null,
+  new_stock integer not null,
+  reason text not null check (
+    reason in ('order', 'cancellation', 'walk_in_sale', 'restock', 'damaged', 'expired', 'correction', 'other')
+  ),
+  order_id uuid references mini_mart_orders (id) on delete set null,
+  order_number text,
+  notes text not null default '',
+  -- The signed-in admin's email for a manual adjustment; null for
+  -- order/cancellation entries (no admin acted) and for a direct table edit
+  -- performed with no session (shouldn't happen in practice, since only
+  -- authenticated admins can write to mini_mart_items at all).
+  created_by text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists mini_mart_inventory_logs_item_idx on mini_mart_inventory_logs (item_id, created_at desc);
+create index if not exists mini_mart_inventory_logs_created_at_idx on mini_mart_inventory_logs (created_at desc);
+create index if not exists mini_mart_inventory_logs_order_idx on mini_mart_inventory_logs (order_id);
+
+create or replace function log_mini_mart_stock_change() returns trigger as $$
+declare
+  v_reason text;
+  v_order_id uuid;
+  v_order_number text;
+  v_notes text;
+  v_created_by text;
+begin
+  -- Nothing actually changed (e.g. renaming a product) — nothing to log.
+  if new.stock_quantity = old.stock_quantity then
+    return new;
+  end if;
+
+  v_reason := coalesce(nullif(current_setting('mm.stock_reason', true), ''), 'correction');
+  v_order_id := nullif(current_setting('mm.stock_order_id', true), '')::uuid;
+  v_order_number := nullif(current_setting('mm.stock_order_number', true), '');
+  v_notes := coalesce(nullif(current_setting('mm.stock_notes', true), ''), '');
+  v_created_by := coalesce(nullif(current_setting('mm.stock_created_by', true), ''), auth.email());
+
+  insert into mini_mart_inventory_logs
+    (item_id, item_name, change_quantity, previous_stock, new_stock, reason, order_id, order_number, notes, created_by)
+  values
+    (new.id, new.name, new.stock_quantity - old.stock_quantity, old.stock_quantity, new.stock_quantity,
+     v_reason, v_order_id, v_order_number, v_notes, v_created_by);
+
+  return new;
+end;
+$$ language plpgsql security definer set search_path = public;
+
+drop trigger if exists trg_log_mini_mart_stock_change on mini_mart_items;
+create trigger trg_log_mini_mart_stock_change
+  after update of stock_quantity on mini_mart_items
+  for each row
+  execute function log_mini_mart_stock_change();
+
+alter table mini_mart_inventory_logs enable row level security;
+
+-- Read-only for admins, and only via this one policy — there is no insert/
+-- update/delete policy for any role, so the trigger above (SECURITY
+-- DEFINER, owned by the table owner like the rest of this schema's
+-- privileged functions) is the only way a row can ever appear here.
+drop policy if exists "admins can view mini mart inventory logs" on mini_mart_inventory_logs;
+create policy "admins can view mini mart inventory logs" on mini_mart_inventory_logs
+  for select to authenticated
+  using (true);
+
+grant select on mini_mart_inventory_logs to authenticated;
+-- No grants to anon at all — customers never see inventory history.
 
 -- ---------------------------------------------------------------------------
 -- Admin access

@@ -195,6 +195,10 @@ export interface Settings {
   gcashNumber: string
   gcashAccountName: string
   gcashQrCodeUrl: string
+  /** Bank transfer QR (e.g. InstaPay/PesoNet). Not yet a selectable checkout
+   *  payment method anywhere — this only lets the admin upload/manage it in
+   *  advance so it's ready when Bank Transfer checkout is added. */
+  bankQrCodeUrl: string
   adminPassword: string
 
   openPlayEnabled: boolean
@@ -236,6 +240,7 @@ export const DEFAULT_SETTINGS: Settings = {
   gcashNumber: '09XX XXX XXXX',
   gcashAccountName: 'Set in Admin Settings',
   gcashQrCodeUrl: '',
+  bankQrCodeUrl: '',
   adminPassword: 'admin123',
 
   openPlayEnabled: false,
@@ -277,6 +282,8 @@ export interface MiniMartItem {
   isAvailable: boolean
   /** Whole units on hand. 0 means sold out regardless of isAvailable. */
   stockQuantity: number
+  /** e.g. "1 can", "320ml", "Regular" — free text, shown next to price. */
+  servingSize: string
   createdAt: string
   updatedAt: string
 }
@@ -289,6 +296,7 @@ export interface MiniMartItemInput {
   imageUrl: string
   isAvailable: boolean
   stockQuantity: number
+  servingSize: string
 }
 
 // ---------------------------------------------------------------------------
@@ -357,4 +365,57 @@ export interface MiniMartOrderStatusLookup {
   total: number
   paymentMethod: PaymentMethod
   paymentStatus: PaymentStatus
+}
+
+// ---------------------------------------------------------------------------
+// Mini Mart inventory logs — an entry per stock_quantity change, whatever
+// caused it. 'order' and 'cancellation' are written by the system only
+// (see place_mini_mart_order / restore_mini_mart_order_stock in schema.sql)
+// and never offered as a choice in the manual Adjust Stock panel — that
+// panel only offers MANUAL_STOCK_REASONS below.
+// ---------------------------------------------------------------------------
+export type MiniMartInventoryReason =
+  | 'order'
+  | 'cancellation'
+  | 'walk_in_sale'
+  | 'restock'
+  | 'damaged'
+  | 'expired'
+  | 'correction'
+  | 'other'
+
+export const MINI_MART_INVENTORY_REASON_LABELS: Record<MiniMartInventoryReason, string> = {
+  order: 'Online Order',
+  cancellation: 'Order Cancelled (Returned to Stock)',
+  walk_in_sale: 'Walk-in Sale',
+  restock: 'Restock',
+  damaged: 'Damaged',
+  expired: 'Expired',
+  correction: 'Correction',
+  other: 'Other',
+}
+
+/** Reasons a manual adjustment can pick — excludes the two system-only reasons. */
+export const MANUAL_STOCK_REASONS: MiniMartInventoryReason[] = [
+  'walk_in_sale',
+  'restock',
+  'damaged',
+  'expired',
+  'correction',
+  'other',
+]
+
+export interface MiniMartInventoryLog {
+  id: string
+  itemId: string | null
+  itemName: string
+  changeQuantity: number
+  previousStock: number
+  newStock: number
+  reason: MiniMartInventoryReason
+  orderId: string | null
+  orderNumber: string | null
+  notes: string
+  createdBy: string | null
+  createdAt: string
 }

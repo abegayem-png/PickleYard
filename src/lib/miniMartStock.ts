@@ -12,3 +12,7 @@ export function isEffectivelyAvailable(item: Pick<MiniMartItem, 'isAvailable' | 
 export function isLowStock(item: Pick<MiniMartItem, 'stockQuantity'>): boolean {
   return item.stockQuantity > 0 && item.stockQuantity <= LOW_STOCK_THRESHOLD
 }
+
+export function isOutOfStock(item: Pick<MiniMartItem, 'stockQuantity'>): boolean {
+  return item.stockQuantity <= 0
+}

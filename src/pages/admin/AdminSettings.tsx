@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSettings } from '../../context/SettingsContext'
 import { isSupabaseConfigured } from '../../lib/supabaseClient'
-import { uploadGcashQrImage } from '../../lib/paymentSettingsStorage'
+import { uploadPaymentQrImage, type PaymentQrKind } from '../../lib/paymentSettingsStorage'
 import type { Settings } from '../../types'
 import { Section, TextField, NumberField, TimeField } from '../../components/admin/SettingsFields'
 import OpenPlaySettingsPanel from '../../components/admin/OpenPlaySettingsPanel'
@@ -13,8 +13,9 @@ export default function AdminSettings() {
   const [saving, setSaving] = useState<string | null>(null)
   const [savedMsg, setSavedMsg] = useState<string | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
-  const [uploadingQr, setUploadingQr] = useState(false)
-  const qrFileInputRef = useRef<HTMLInputElement>(null)
+  const [uploadingQr, setUploadingQr] = useState<PaymentQrKind | null>(null)
+  const gcashQrFileInputRef = useRef<HTMLInputElement>(null)
+  const bankQrFileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => setForm(settings), [settings])
 
@@ -22,21 +23,23 @@ export default function AdminSettings() {
     setForm((f) => ({ ...f, [key]: value }))
   }
 
-  async function handleQrFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleQrFileSelected(kind: PaymentQrKind, e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
+    const ref = kind === 'gcash' ? gcashQrFileInputRef : bankQrFileInputRef
     if (!file) return
-    setUploadingQr(true)
+    setUploadingQr(kind)
     setErrorMsg(null)
     try {
-      const url = await uploadGcashQrImage(file)
-      set('gcashQrCodeUrl', url)
-      await save('GCash settings', { gcashQrCodeUrl: url })
+      const url = await uploadPaymentQrImage(file, kind)
+      const field = kind === 'gcash' ? 'gcashQrCodeUrl' : 'bankQrCodeUrl'
+      set(field, url)
+      await save(kind === 'gcash' ? 'GCash settings' : 'Bank QR', { [field]: url })
     } catch (err) {
-      logError('Failed to upload GCash QR code:', err)
-      setErrorMsg(`Couldn't upload QR code: ${getErrorMessage(err)}`)
+      logError(`Failed to upload ${kind === 'gcash' ? 'GCash' : 'Bank'} QR code:`, err)
+      setErrorMsg(`Couldn't upload ${kind === 'gcash' ? 'GCash' : 'Bank'} QR code: ${getErrorMessage(err)}`)
     } finally {
-      setUploadingQr(false)
-      if (qrFileInputRef.current) qrFileInputRef.current.value = ''
+      setUploadingQr(null)
+      if (ref.current) ref.current.value = ''
     }
   }
 
@@ -194,7 +197,7 @@ export default function AdminSettings() {
         <TextField label="GCash Account Name" value={form.gcashAccountName} onChange={(v) => set('gcashAccountName', v)} />
 
         <div>
-          <span className="mb-1.5 block text-sm font-semibold text-cream-dim">QR Code</span>
+          <span className="mb-1.5 block text-sm font-semibold text-cream-dim">GCash QR</span>
           <div className="flex items-center gap-3">
             <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-xl bg-white">
               {form.gcashQrCodeUrl ? (
@@ -208,10 +211,10 @@ export default function AdminSettings() {
               {isSupabaseConfigured && (
                 <>
                   <input
-                    ref={qrFileInputRef}
+                    ref={gcashQrFileInputRef}
                     type="file"
                     accept="image/*"
-                    onChange={handleQrFileSelected}
+                    onChange={(e) => handleQrFileSelected('gcash', e)}
                     className="hidden"
                     id="gcash-qr-file-input"
                   />
@@ -219,7 +222,7 @@ export default function AdminSettings() {
                     htmlFor="gcash-qr-file-input"
                     className="inline-block cursor-pointer rounded-lg bg-white/5 px-3 py-1.5 text-xs font-bold text-cream hover:bg-white/10"
                   >
-                    {uploadingQr ? 'Uploading…' : 'Upload / Replace QR'}
+                    {uploadingQr === 'gcash' ? 'Uploading…' : 'Upload / Replace'}
                   </label>
                 </>
               )}
@@ -228,6 +231,52 @@ export default function AdminSettings() {
           {!isSupabaseConfigured && (
             <p className="mt-1 text-xs text-cream-dim">Paste an image URL above (QR upload requires Supabase to be connected).</p>
           )}
+        </div>
+      </Section>
+
+      <Section
+        title="Bank Transfer QR"
+        onSave={() => save('Bank QR', { bankQrCodeUrl: form.bankQrCodeUrl })}
+        saving={saving === 'Bank QR'}
+      >
+        <div>
+          <span className="mb-1.5 block text-sm font-semibold text-cream-dim">Bank QR</span>
+          <div className="flex items-center gap-3">
+            <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-xl bg-white">
+              {form.bankQrCodeUrl ? (
+                <img src={form.bankQrCodeUrl} alt="Bank transfer QR code" className="h-full w-full object-contain p-1" />
+              ) : (
+                <span className="text-2xl">📷</span>
+              )}
+            </div>
+            <div className="flex-1 space-y-2">
+              <TextField label="" value={form.bankQrCodeUrl} onChange={(v) => set('bankQrCodeUrl', v)} />
+              {isSupabaseConfigured && (
+                <>
+                  <input
+                    ref={bankQrFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => handleQrFileSelected('bank', e)}
+                    className="hidden"
+                    id="bank-qr-file-input"
+                  />
+                  <label
+                    htmlFor="bank-qr-file-input"
+                    className="inline-block cursor-pointer rounded-lg bg-white/5 px-3 py-1.5 text-xs font-bold text-cream hover:bg-white/10"
+                  >
+                    {uploadingQr === 'bank' ? 'Uploading…' : 'Upload / Replace'}
+                  </label>
+                </>
+              )}
+            </div>
+          </div>
+          {!isSupabaseConfigured && (
+            <p className="mt-1 text-xs text-cream-dim">Paste an image URL above (QR upload requires Supabase to be connected).</p>
+          )}
+          <p className="mt-2 text-xs text-cream-dim">
+            Not shown at checkout yet — Bank Transfer isn't a selectable payment option there. Stored here so it's ready when it is.
+          </p>
         </div>
       </Section>
 

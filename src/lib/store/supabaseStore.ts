@@ -13,6 +13,7 @@ import type {
   MiniMartItem,
   MiniMartOrder,
   MiniMartOrderItem,
+  MiniMartInventoryLog,
 } from '../../types'
 import { DEFAULT_SETTINGS } from '../../types'
 import { supabase } from '../supabaseClient'
@@ -75,6 +76,7 @@ function settingsFromRow(row: Record<string, unknown>): Settings {
     gcashNumber: (row.gcash_number as string) ?? DEFAULT_SETTINGS.gcashNumber,
     gcashAccountName: (row.gcash_account_name as string) ?? DEFAULT_SETTINGS.gcashAccountName,
     gcashQrCodeUrl: (row.gcash_qr_code_url as string) ?? DEFAULT_SETTINGS.gcashQrCodeUrl,
+    bankQrCodeUrl: (row.bank_qr_code_url as string) ?? DEFAULT_SETTINGS.bankQrCodeUrl,
     adminPassword: DEFAULT_SETTINGS.adminPassword, // admin auth is handled via Supabase Auth, not this field
 
     openPlayEnabled: Boolean(row.open_play_enabled ?? DEFAULT_SETTINGS.openPlayEnabled),
@@ -112,6 +114,7 @@ function settingsToRow(s: Partial<Settings>): Record<string, unknown> {
     gcashNumber: 'gcash_number',
     gcashAccountName: 'gcash_account_name',
     gcashQrCodeUrl: 'gcash_qr_code_url',
+    bankQrCodeUrl: 'bank_qr_code_url',
     adminPassword: 'admin_password',
     openPlayEnabled: 'open_play_enabled',
     openPlayScheduleType: 'open_play_schedule_type',
@@ -219,6 +222,7 @@ function miniMartItemFromRow(row: Record<string, unknown>): MiniMartItem {
     imageUrl: (row.image_url as string) ?? '',
     isAvailable: Boolean(row.is_available),
     stockQuantity: Number(row.stock_quantity ?? 0),
+    servingSize: (row.serving_size as string) ?? '',
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -233,7 +237,25 @@ function miniMartItemToRow(input: Partial<import('../../types').MiniMartItemInpu
   if (input.imageUrl !== undefined) row.image_url = input.imageUrl
   if (input.isAvailable !== undefined) row.is_available = input.isAvailable
   if (input.stockQuantity !== undefined) row.stock_quantity = input.stockQuantity
+  if (input.servingSize !== undefined) row.serving_size = input.servingSize
   return row
+}
+
+function miniMartInventoryLogFromRow(row: Record<string, unknown>): MiniMartInventoryLog {
+  return {
+    id: row.id as string,
+    itemId: (row.item_id as string) ?? null,
+    itemName: row.item_name as string,
+    changeQuantity: Number(row.change_quantity),
+    previousStock: Number(row.previous_stock),
+    newStock: Number(row.new_stock),
+    reason: row.reason as MiniMartInventoryLog['reason'],
+    orderId: (row.order_id as string) ?? null,
+    orderNumber: (row.order_number as string) ?? null,
+    notes: (row.notes as string) ?? '',
+    createdBy: (row.created_by as string) ?? null,
+    createdAt: row.created_at as string,
+  }
 }
 
 function miniMartOrderItemFromRow(row: Record<string, unknown>): MiniMartOrderItem {
@@ -683,16 +705,29 @@ export const supabaseStore: DataStore = {
     if (error) throw error
   },
 
-  async adjustMiniMartItemStock(id, delta) {
+  async adjustMiniMartItemStock(id, delta, reason = 'correction', notes) {
     // Atomic relative update on the DB side (`stock_quantity + delta`, clamped
     // at 0) rather than read-then-write from a possibly-stale client value —
     // safe even if stock changed (e.g. a customer order) since this was last
-    // fetched.
-    const { error: rpcError } = await sb().rpc('adjust_mini_mart_stock', { p_item_id: id, p_delta: delta })
+    // fetched. The RPC also logs this change to mini_mart_inventory_logs.
+    const { error: rpcError } = await sb().rpc('adjust_mini_mart_stock', {
+      p_item_id: id,
+      p_delta: delta,
+      p_reason: reason,
+      p_notes: notes ?? null,
+    })
     if (rpcError) throw rpcError
     const { data, error } = await sb().from('mini_mart_items').select('*').eq('id', id).single()
     if (error) throw error
     return miniMartItemFromRow(data)
+  },
+
+  async listMiniMartInventoryLogs(itemId) {
+    let query = sb().from('mini_mart_inventory_logs').select('*').order('created_at', { ascending: false })
+    if (itemId) query = query.eq('item_id', itemId)
+    const { data, error } = await query
+    if (error) throw error
+    return (data ?? []).map(miniMartInventoryLogFromRow)
   },
 
   async placeMiniMartOrder(input) {

@@ -12,6 +12,7 @@ const TABS = [
   { to: '/admin/promo-codes', label: 'Promo Codes' },
   { to: '/admin/mini-mart', label: 'Mini Mart · Products' },
   { to: '/admin/mini-mart/orders', label: 'Mini Mart · Orders' },
+  { to: '/admin/mini-mart/inventory', label: 'Mini Mart · Inventory History' },
   { to: '/admin/settings', label: 'Settings' },
 ]
 
