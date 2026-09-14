@@ -54,10 +54,15 @@ alter table bookings alter column normal_total set default 0;
 -- 'unpaid'/'paid' — existing 'paid' rows are remapped to 'verified' (same
 -- meaning, new name) before the constraint is tightened, so no existing
 -- booking's payment state is lost or reinterpreted.
+--
+-- The old, more restrictive constraint (e.g. 'unpaid'/'paid' only) must be
+-- dropped BEFORE the remap below writes 'verified' — otherwise that write is
+-- rejected by whichever constraint is still active at that point, which is
+-- exactly what the drop-after-update ordering used to do here.
 alter table bookings add column if not exists payment_proof_url text;
 alter table bookings add column if not exists payment_verified_at timestamptz;
-update bookings set payment_status = 'verified' where payment_status = 'paid';
 alter table bookings drop constraint if exists bookings_payment_status_check;
+update bookings set payment_status = 'verified' where payment_status = 'paid';
 alter table bookings add constraint bookings_payment_status_check
   check (payment_status in ('unpaid', 'pending', 'verified', 'rejected'));
 
