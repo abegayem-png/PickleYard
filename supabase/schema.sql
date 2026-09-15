@@ -32,6 +32,12 @@ create table if not exists bookings (
   -- viewable image only for authenticated admins, via a signed URL.
   payment_proof_url text,
   payment_verified_at timestamptz,
+  -- Random, unguessable per-booking secret (distinct from booking_reference,
+  -- which is short and shown/typed by the customer). This is what the "My
+  -- Booking" homepage section stores in localStorage to auto-restore a
+  -- booking after a refresh/revisit, without ever persisting the customer's
+  -- mobile number in browser storage. See get_booking_by_token() below.
+  access_token uuid not null default gen_random_uuid(),
   notes text,
   created_at timestamptz not null default now()
 );
@@ -48,6 +54,14 @@ alter table bookings add column if not exists discount_amount numeric(10, 2) not
 update bookings set normal_total = total_amount where normal_total is null;
 alter table bookings alter column normal_total set not null;
 alter table bookings alter column normal_total set default 0;
+
+-- `default gen_random_uuid()` on ADD COLUMN evaluates once per existing row
+-- (Postgres only takes the fast, single-value metadata shortcut for constant
+-- defaults; a volatile one like this always triggers a per-row backfill), so
+-- every pre-existing booking gets its own distinct token here, never a
+-- shared one.
+alter table bookings add column if not exists access_token uuid not null default gen_random_uuid();
+create unique index if not exists bookings_access_token_idx on bookings (access_token);
 
 -- GCash manual payment verification (screenshot upload + admin review).
 -- payment_status gains 'pending'/'rejected' alongside the original
@@ -739,6 +753,26 @@ $$;
 
 revoke all on function get_booking_by_reference(text, text) from public;
 grant execute on function get_booking_by_reference(text, text) to anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- RPC: look up a single booking by its access_token, for the persistent
+-- "My Booking" homepage section. The token (not the mobile number) is what
+-- gets saved in localStorage after a successful booking, so returning to
+-- the site auto-restores the booking without the browser ever holding the
+-- customer's mobile number long-term. Same SECURITY DEFINER shape as
+-- get_booking_by_reference above — a random uuid is the "password" here.
+-- ---------------------------------------------------------------------------
+create or replace function get_booking_by_token(p_token uuid)
+returns setof bookings
+language sql
+security definer
+set search_path = public
+as $$
+  select * from bookings where access_token = p_token;
+$$;
+
+revoke all on function get_booking_by_token(uuid) from public;
+grant execute on function get_booking_by_token(uuid) to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Row Level Security

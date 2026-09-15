@@ -50,6 +50,7 @@ function bookingFromRow(row: Record<string, unknown>): Booking {
     paymentMethod: row.payment_method as Booking['paymentMethod'],
     paymentProofUrl: (row.payment_proof_url as string) ?? null,
     paymentVerifiedAt: (row.payment_verified_at as string) ?? null,
+    accessToken: row.access_token as string,
     notes: (row.notes as string) ?? undefined,
     createdAt: row.created_at as string,
   }
@@ -381,6 +382,14 @@ export const supabaseStore: DataStore = {
       p_reference: reference.trim(),
       p_mobile: mobileNumber.trim(),
     })
+    if (error) throw error
+    if (!data || (Array.isArray(data) && data.length === 0)) return null
+    const row = Array.isArray(data) ? data[0] : data
+    return bookingFromRow(row)
+  },
+
+  async getBookingByToken(accessToken) {
+    const { data, error } = await sb().rpc('get_booking_by_token', { p_token: accessToken })
     if (error) throw error
     if (!data || (Array.isArray(data) && data.length === 0)) return null
     const row = Array.isArray(data) ? data[0] : data

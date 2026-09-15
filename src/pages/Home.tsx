@@ -9,6 +9,7 @@ import ContactSection from '../components/home/ContactSection'
 import OpenPlaySection from '../components/home/OpenPlaySection'
 import OpenPlayBanner from '../components/home/OpenPlayBanner'
 import FreePlaySection from '../components/home/FreePlaySection'
+import MyBookingSection from '../components/home/MyBookingSection'
 import PromoBanner from '../components/home/PromoBanner'
 import BookingWidget from '../components/booking/BookingWidget'
 
@@ -17,6 +18,7 @@ export default function Home() {
     <Layout>
       <OpenPlayBanner />
       <Hero />
+      <MyBookingSection />
 
       <section id="book" className="scroll-mt-20 px-4 py-10 sm:px-6 sm:py-14">
         <div className="mx-auto max-w-xl">

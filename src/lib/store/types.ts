@@ -50,6 +50,9 @@ export interface DataStore {
   listBookings(): Promise<Booking[]>
   getBooking(id: string): Promise<Booking | null>
   findBookingByReference(reference: string, mobileNumber: string): Promise<Booking | null>
+  /** Public "My Booking" lookup by the random per-booking access token saved
+   *  in localStorage — no mobile number needed. */
+  getBookingByToken(accessToken: string): Promise<Booking | null>
 
   createBooking(input: BookingInput): Promise<Booking>
   updateBookingStatus(id: string, status: BookingStatus): Promise<Booking>

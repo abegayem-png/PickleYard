@@ -362,12 +362,18 @@ export const localStore: DataStore = {
       paymentMethod: input.paymentMethod,
       paymentProofUrl: null,
       paymentVerifiedAt: null,
+      accessToken: newId(),
       notes: input.notes,
       createdAt: new Date().toISOString(),
     }
     bookings.push(booking)
     write(KEYS.bookings, bookings)
     return booking
+  },
+
+  async getBookingByToken(accessToken) {
+    const bookings = read<Booking[]>(KEYS.bookings, [])
+    return bookings.find((b) => b.accessToken === accessToken) ?? null
   },
 
   async updateBookingStatus(id, status: BookingStatus) {

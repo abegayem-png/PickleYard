@@ -33,6 +33,11 @@ export interface Booking {
    *  for authenticated admins, via a short-lived signed URL. */
   paymentProofUrl: string | null
   paymentVerifiedAt: string | null
+  /** Random, unguessable per-booking secret — never shown to the customer,
+   *  used only as the lookup key for the "My Booking" localStorage restore
+   *  (get_booking_by_token), so the browser never has to hold their mobile
+   *  number long-term. */
+  accessToken: string
   notes?: string
   createdAt: string
 }

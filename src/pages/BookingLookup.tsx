@@ -9,6 +9,7 @@ import { useSettings } from '../context/SettingsContext'
 import { store } from '../lib/store'
 import { formatDateLong, formatTimeRange12h } from '../lib/time'
 import { paymentBadgeLabel, paymentBadgeTone } from '../lib/paymentDisplay'
+import { saveBookingRef } from '../lib/myBookings'
 import type { Booking } from '../types'
 
 const STATUS_TONE = { pending: 'pending', confirmed: 'confirmed', cancelled: 'cancelled' } as const
@@ -38,7 +39,13 @@ export default function BookingLookup() {
       const result = await store.findBookingByReference(ref.trim(), mob.trim())
       setBooking(result)
       setSearched(true)
-      if (!result) setError('No booking found. Check your reference number and mobile number.')
+      if (result) {
+        // Remember it on this device from now on — future visits auto-restore
+        // it without needing the mobile number again.
+        saveBookingRef({ reference: result.bookingReference, accessToken: result.accessToken, bookingDate: result.bookingDate })
+      } else {
+        setError('No booking found. Check your reference number and mobile number.')
+      }
     } catch {
       setError('Something went wrong. Please try again.')
     } finally {

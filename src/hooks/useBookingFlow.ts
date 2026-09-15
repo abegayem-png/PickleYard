@@ -5,6 +5,7 @@ import { calculatePrice, getAvailableDurations, getAvailableStartHours } from '.
 import type { BookingLike, BlockedSlotLike } from '../lib/pricing'
 import { hourToTime, minutesToTime, timeToMinutes, todayISO } from '../lib/time'
 import { getErrorMessage } from '../lib/errors'
+import { saveBookingRef } from '../lib/myBookings'
 import type { Booking, BookingInput, PaymentMethod, PromoPreview } from '../types'
 
 export type BookingStep = 'date' | 'time' | 'duration' | 'info' | 'summary' | 'confirmation'
@@ -210,6 +211,10 @@ export function useBookingFlow() {
         promoCode: appliedPromo?.valid ? appliedPromo.code : undefined,
       }
       const booking = await store.createBooking(input)
+      // Persist just the reference + access token (never the mobile number)
+      // so "My Booking" survives a refresh/revisit on this device — the
+      // actual details always come fresh from Supabase on every load.
+      saveBookingRef({ reference: booking.bookingReference, accessToken: booking.accessToken, bookingDate: booking.bookingDate })
       setConfirmedBooking(booking)
       setStep('confirmation')
     } catch (err) {
