@@ -1,10 +1,15 @@
+import { useState } from 'react'
 import { useFreePlayAvailability } from '../../hooks/useFreePlayAvailability'
 import type { FreePlayDay, FreePlaySlot } from '../../hooks/useFreePlayAvailability'
+import { todayISO } from '../../lib/time'
 import Badge from '../ui/Badge'
 import Card from '../ui/Card'
+import Button from '../ui/Button'
+import JoinFreePlayModal from './JoinFreePlayModal'
 
 export default function FreePlaySection() {
-  const { loading, phase, tomorrow, visibleSlots, anyFreeVisible } = useFreePlayAvailability()
+  const { loading, phase, tomorrow, visibleSlots, anyFreeVisible, joinSlot } = useFreePlayAvailability()
+  const [joiningSlot, setJoiningSlot] = useState<FreePlaySlot | null>(null)
 
   return (
     <section id="free-play" className="scroll-mt-20 bg-court-900/50 px-4 py-14 sm:px-6 sm:py-20">
@@ -29,7 +34,7 @@ export default function FreePlaySection() {
             <>
               <div className="space-y-3">
                 {visibleSlots.map((slot) => (
-                  <SlotRow key={slot.startTime} slot={slot} />
+                  <SlotCard key={slot.startTime} slot={slot} onJoinClick={() => setJoiningSlot(slot)} />
                 ))}
               </div>
 
@@ -56,19 +61,48 @@ export default function FreePlaySection() {
           )}
         </Card>
       </div>
+
+      {joiningSlot && (
+        <JoinFreePlayModal
+          slotLabel={joiningSlot.label}
+          playDate={todayISO()}
+          startTime={joiningSlot.startTime}
+          endTime={joiningSlot.endTime}
+          onJoin={joinSlot}
+          onClose={() => setJoiningSlot(null)}
+        />
+      )}
     </section>
   )
 }
 
-function SlotRow({ slot }: { slot: FreePlaySlot }) {
+/** Free slots get the full card treatment (status, join count, Join button);
+ *  booked slots stay a compact muted row — there's nothing to act on there. */
+function SlotCard({ slot, onJoinClick }: { slot: FreePlaySlot; onJoinClick: () => void }) {
+  if (!slot.free) {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/5 bg-white/5 px-4 py-3 opacity-60">
+        <span className="font-display font-bold text-cream-dim">{slot.label}</span>
+        <Badge tone="cancelled">Booked</Badge>
+      </div>
+    )
+  }
+
   return (
-    <div
-      className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border px-4 py-3 ${
-        slot.free ? 'border-lime-500/40 bg-lime-500/10' : 'border-white/5 bg-white/5 opacity-60'
-      }`}
-    >
-      <span className={`font-display font-bold ${slot.free ? 'text-cream' : 'text-cream-dim'}`}>{slot.label}</span>
-      <Badge tone={slot.free ? 'paid' : 'cancelled'}>{slot.free ? 'Available — Free Play' : 'Booked'}</Badge>
+    <div className="rounded-xl border border-lime-500/40 bg-lime-500/10 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-widest text-lime-500">Free Play</p>
+          <p className="font-display text-lg font-bold text-cream">{slot.label}</p>
+        </div>
+        <Badge tone="paid">Available</Badge>
+      </div>
+      <p className="mt-2 text-sm text-cream-dim">
+        {slot.joinedCount} {slot.joinedCount === 1 ? 'player' : 'players'} joined
+      </p>
+      <Button fullWidth size="md" className="mt-3" onClick={onJoinClick}>
+        Join Free Play
+      </Button>
     </div>
   )
 }
@@ -85,7 +119,15 @@ function AfterHoursView({ tomorrow }: { tomorrow: FreePlayDay | null }) {
           </p>
           <div className="space-y-3">
             {tomorrow.slots.map((slot) => (
-              <SlotRow key={slot.startTime} slot={slot} />
+              <div
+                key={slot.startTime}
+                className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border px-4 py-3 ${
+                  slot.free ? 'border-lime-500/40 bg-lime-500/10' : 'border-white/5 bg-white/5 opacity-60'
+                }`}
+              >
+                <span className={`font-display font-bold ${slot.free ? 'text-cream' : 'text-cream-dim'}`}>{slot.label}</span>
+                <Badge tone={slot.free ? 'paid' : 'cancelled'}>{slot.free ? 'Available — Free Play' : 'Booked'}</Badge>
+              </div>
             ))}
           </div>
         </div>

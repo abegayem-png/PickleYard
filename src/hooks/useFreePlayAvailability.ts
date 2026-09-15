@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useSettings } from '../context/SettingsContext'
 import { store } from '../lib/store'
+import { getErrorMessage } from '../lib/errors'
 import { formatTimeRange12h, rangesOverlap, timeToMinutes, todayISO } from '../lib/time'
 import type { AvailabilityRow } from '../lib/store/types'
-import type { BlockedSlot, OpenPlaySession } from '../types'
+import type { BlockedSlot, JoinFreePlayResult, OpenPlaySession } from '../types'
 
 /** Free Play runs 2 PM - 5 PM: three fixed one-hour blocks. */
 const FREE_PLAY_START_HOUR = 14
@@ -16,6 +17,7 @@ export interface FreePlaySlot {
   endTime: string
   label: string
   free: boolean
+  joinedCount: number
 }
 
 export type FreePlayPhase = 'before' | 'during' | 'after'
@@ -61,10 +63,11 @@ async function loadFreePlayDay(
   openingTime: string,
   closingTime: string,
 ): Promise<FreePlayDay> {
-  const [bookings, allBlocked, openPlaySessions] = await Promise.all([
+  const [bookings, allBlocked, openPlaySessions, counts] = await Promise.all([
     store.getAvailabilityForDate(date),
     store.listBlockedSlots(),
     openPlayBlockBookings ? store.getOpenPlaySessionsForDate(date) : Promise.resolve([] as OpenPlaySession[]),
+    store.getFreePlaySlotCounts(date),
   ])
 
   const blockedForDate = (allBlocked as BlockedSlot[])
@@ -79,7 +82,8 @@ async function loadFreePlayDay(
     const startTime = `${String(hour).padStart(2, '0')}:00`
     const endTime = `${String(hour + 1).padStart(2, '0')}:00`
     const booked = isRangeBooked(hour * 60, (hour + 1) * 60, bookings, blockedForDate, openPlaySessions)
-    slots.push({ startTime, endTime, label: formatTimeRange12h(startTime, endTime), free: !booked })
+    const joinedCount = counts.find((c) => c.startTime === startTime && c.endTime === endTime)?.joinedCount ?? 0
+    slots.push({ startTime, endTime, label: formatTimeRange12h(startTime, endTime), free: !booked, joinedCount })
   }
 
   return { date, slots, anyFree: slots.some((s) => s.free) }
@@ -108,29 +112,28 @@ export function useFreePlayAvailability() {
     return () => clearInterval(id)
   }, [])
 
-  useEffect(() => {
-    let cancelled = false
-    setLoading(true)
+  const refresh = useCallback(async () => {
     const todayDate = todayISO()
     const tomorrowDate = addDaysISO(todayDate, 1)
-
-    Promise.all([
+    const [t, tmr] = await Promise.all([
       loadFreePlayDay(todayDate, settings.openPlayBlockBookings, settings.openingTime, settings.closingTime),
       // Tomorrow's preview is only ever shown after today's window has ended —
       // fetched unconditionally here since it's cheap and keeps the hook simple.
       loadFreePlayDay(tomorrowDate, settings.openPlayBlockBookings, settings.openingTime, settings.closingTime),
     ])
-      .then(([t, tmr]) => {
-        if (cancelled) return
-        setToday(t)
-        setTomorrow(tmr)
-      })
-      .finally(() => !cancelled && setLoading(false))
+    setToday(t)
+    setTomorrow(tmr)
+  }, [settings.openPlayBlockBookings, settings.openingTime, settings.closingTime])
 
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    refresh().finally(() => !cancelled && setLoading(false))
     return () => {
       cancelled = true
     }
-  }, [settings.openPlayBlockBookings, settings.openingTime, settings.closingTime, nowMinutes])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refresh, nowMinutes])
 
   const phase: FreePlayPhase = nowMinutes < FREE_PLAY_START_MIN ? 'before' : nowMinutes < FREE_PLAY_END_MIN ? 'during' : 'after'
 
@@ -141,5 +144,23 @@ export function useFreePlayAvailability() {
       : today?.slots ?? []
   const anyFreeVisible = visibleSlots.some((s) => s.free)
 
-  return { loading, phase, today, tomorrow, visibleSlots, anyFreeVisible }
+  /** Joins a slot for the given date — the RPC (or its demo-mode equivalent)
+   *  re-validates the slot is still actually free and re-checks for a
+   *  duplicate name server-side, so this never trusts what's currently on
+   *  screen. Refreshes on success so the shown count/availability stays
+   *  accurate immediately, without waiting for the next 60s tick. */
+  const joinSlot = useCallback(
+    async (playDate: string, startTime: string, endTime: string, participantName: string): Promise<JoinFreePlayResult> => {
+      try {
+        const result = await store.joinFreePlay({ participantName, playDate, startTime, endTime })
+        if (result.success) await refresh()
+        return result
+      } catch (err) {
+        return { success: false, reason: getErrorMessage(err, 'Could not join Free Play. Please try again.'), participantId: null, joinedCount: 0 }
+      }
+    },
+    [refresh],
+  )
+
+  return { loading, phase, today, tomorrow, visibleSlots, anyFreeVisible, joinSlot }
 }

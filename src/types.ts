@@ -419,3 +419,43 @@ export interface MiniMartInventoryLog {
   createdBy: string | null
   createdAt: string
 }
+
+// ---------------------------------------------------------------------------
+// Free Play — the free, no-booking-required 2 PM-5 PM court window. Slots
+// are not stored rows (unlike Open Play sessions); they're the three fixed
+// hourly blocks computed live from bookings/blocked_slots/open_play_sessions.
+// Joining only adds a name to this attendance list — it never creates,
+// modifies, or blocks a real booking.
+// ---------------------------------------------------------------------------
+export interface FreePlayParticipant {
+  id: string
+  participantName: string
+  playDate: string // YYYY-MM-DD
+  startTime: string // HH:MM
+  endTime: string // HH:MM
+  createdAt: string
+}
+
+export interface JoinFreePlayInput {
+  participantName: string
+  playDate: string
+  startTime: string
+  endTime: string
+}
+
+/** Result of joining — trusted, server-computed (RPC in production), same
+ *  shape as PlaceOrderResult/register_open_play's result. */
+export interface JoinFreePlayResult {
+  success: boolean
+  reason: string | null
+  participantId: string | null
+  joinedCount: number
+}
+
+/** Public, PII-free join count per slot — never names. */
+export interface FreePlaySlotCount {
+  playDate: string
+  startTime: string
+  endTime: string
+  joinedCount: number
+}

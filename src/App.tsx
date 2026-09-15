@@ -13,6 +13,7 @@ import AdminBlockedSlots from './pages/admin/AdminBlockedSlots'
 import AdminManualBooking from './pages/admin/AdminManualBooking'
 import AdminSettings from './pages/admin/AdminSettings'
 import AdminOpenPlay from './pages/admin/AdminOpenPlay'
+import AdminFreePlay from './pages/admin/AdminFreePlay'
 import AdminPromoCodes from './pages/admin/AdminPromoCodes'
 import AdminMiniMart from './pages/admin/AdminMiniMart'
 import AdminMiniMartOrders from './pages/admin/AdminMiniMartOrders'
@@ -36,6 +37,7 @@ export default function App() {
               <Route path="blocked" element={<AdminBlockedSlots />} />
               <Route path="new-booking" element={<AdminManualBooking />} />
               <Route path="open-play" element={<AdminOpenPlay />} />
+              <Route path="free-play" element={<AdminFreePlay />} />
               <Route path="promo-codes" element={<AdminPromoCodes />} />
               <Route path="mini-mart" element={<AdminMiniMart />} />
               <Route path="mini-mart/orders" element={<AdminMiniMartOrders />} />

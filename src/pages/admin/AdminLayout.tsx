@@ -9,6 +9,7 @@ const TABS = [
   { to: '/admin/blocked', label: 'Blocked Slots' },
   { to: '/admin/new-booking', label: 'New Booking' },
   { to: '/admin/open-play', label: 'Open Play' },
+  { to: '/admin/free-play', label: 'Free Play' },
   { to: '/admin/promo-codes', label: 'Promo Codes' },
   { to: '/admin/mini-mart', label: 'Mini Mart · Products' },
   { to: '/admin/mini-mart/orders', label: 'Mini Mart · Orders' },

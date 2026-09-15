@@ -14,11 +14,12 @@ import type {
   MiniMartOrderStatus,
   MiniMartInventoryLog,
   MiniMartInventoryReason,
+  FreePlayParticipant,
 } from '../../types'
 import { DEFAULT_SETTINGS } from '../../types'
 import { calculatePrice, generateBookingReference } from '../pricing'
 import { checkPromoEligibility, normalizePromoCode, GENERIC_INVALID_MESSAGE } from '../promo'
-import { timeToHour, todayISO } from '../time'
+import { rangesOverlap, timeToHour, timeToMinutes, todayISO } from '../time'
 import type { AvailabilityRow, DataStore } from './types'
 
 const KEYS = {
@@ -32,6 +33,49 @@ const KEYS = {
   miniMartOrders: 'pkl_mini_mart_orders',
   miniMartOrderSeq: 'pkl_mini_mart_order_seq',
   miniMartInventoryLogs: 'pkl_mini_mart_inventory_logs',
+  freePlayParticipants: 'pkl_free_play_participants',
+}
+
+/** Mirrors join_free_play()'s server-side conflict check: a slot only
+ *  counts as free if nothing else — an active booking, a blocked slot, or
+ *  (when configured to) an Open Play session — already covers it. */
+function isFreePlaySlotBooked(playDate: string, startTime: string, endTime: string, settings: Settings): boolean {
+  const startMin = timeToMinutes(startTime)
+  const endMin = timeToMinutes(endTime)
+
+  const bookings = read<Booking[]>(KEYS.bookings, [])
+  if (
+    bookings.some(
+      (b) => b.bookingDate === playDate && b.status !== 'cancelled' && rangesOverlap(startMin, endMin, timeToMinutes(b.startTime), timeToMinutes(b.endTime)),
+    )
+  ) {
+    return true
+  }
+
+  const blocked = read<BlockedSlot[]>(KEYS.blockedSlots, [])
+  if (
+    blocked.some((b) => {
+      if (b.date !== playDate) return false
+      const bStart = timeToMinutes(b.allDay ? settings.openingTime : b.startTime)
+      const bEnd = timeToMinutes(b.allDay ? settings.closingTime : b.endTime)
+      return rangesOverlap(startMin, endMin, bStart, bEnd)
+    })
+  ) {
+    return true
+  }
+
+  if (settings.openPlayBlockBookings) {
+    const sessions = read<OpenPlaySession[]>(KEYS.openPlaySessions, [])
+    if (
+      sessions.some(
+        (s) => s.sessionDate === playDate && s.status === 'scheduled' && rangesOverlap(startMin, endMin, timeToMinutes(s.startTime), timeToMinutes(s.endTime)),
+      )
+    ) {
+      return true
+    }
+  }
+
+  return false
 }
 
 function nextMiniMartOrderNumber(): string {
@@ -802,6 +846,83 @@ export const localStore: DataStore = {
     orders[idx] = { ...orders[idx], status, updatedAt: new Date().toISOString() }
     write(KEYS.miniMartOrders, orders)
     return orders[idx]
+  },
+
+  async getFreePlaySlotCounts(date) {
+    const participants = read<FreePlayParticipant[]>(KEYS.freePlayParticipants, [])
+    const counts = new Map<string, number>()
+    for (const p of participants) {
+      if (p.playDate !== date) continue
+      const key = `${p.startTime}-${p.endTime}`
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    }
+    return [...counts.entries()].map(([key, joinedCount]) => {
+      const [startTime, endTime] = key.split('-')
+      return { playDate: date, startTime, endTime, joinedCount }
+    })
+  },
+
+  async joinFreePlay(input) {
+    const name = input.participantName.trim()
+    if (!name) return { success: false, reason: 'Enter your name.', participantId: null, joinedCount: 0 }
+
+    const startMin = timeToMinutes(input.startTime)
+    const endMin = timeToMinutes(input.endTime)
+    if (startMin < timeToMinutes('14:00') || endMin > timeToMinutes('17:00') || endMin <= startMin) {
+      return { success: false, reason: 'That is not a valid Free Play time slot.', participantId: null, joinedCount: 0 }
+    }
+
+    const settings = read<Settings>(KEYS.settings, DEFAULT_SETTINGS)
+    if (isFreePlaySlotBooked(input.playDate, input.startTime, input.endTime, settings)) {
+      return { success: false, reason: 'This Free Play slot is no longer available.', participantId: null, joinedCount: 0 }
+    }
+
+    const participants = read<FreePlayParticipant[]>(KEYS.freePlayParticipants, [])
+    const sameSlot = participants.filter(
+      (p) => p.playDate === input.playDate && p.startTime === input.startTime && p.endTime === input.endTime,
+    )
+    const alreadyJoined = sameSlot.some((p) => p.participantName.trim().toLowerCase() === name.toLowerCase())
+    if (alreadyJoined) {
+      return {
+        success: false,
+        reason: 'You may already be registered for this Free Play slot.',
+        participantId: null,
+        joinedCount: sameSlot.length,
+      }
+    }
+
+    const participant: FreePlayParticipant = {
+      id: newId(),
+      participantName: name,
+      playDate: input.playDate,
+      startTime: input.startTime,
+      endTime: input.endTime,
+      createdAt: new Date().toISOString(),
+    }
+    write(KEYS.freePlayParticipants, [...participants, participant])
+
+    return { success: true, reason: null, participantId: participant.id, joinedCount: sameSlot.length + 1 }
+  },
+
+  async listFreePlayParticipants(date) {
+    const participants = read<FreePlayParticipant[]>(KEYS.freePlayParticipants, [])
+    return participants.filter((p) => p.playDate === date).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  },
+
+  async removeFreePlayParticipant(id) {
+    const participants = read<FreePlayParticipant[]>(KEYS.freePlayParticipants, [])
+    write(
+      KEYS.freePlayParticipants,
+      participants.filter((p) => p.id !== id),
+    )
+  },
+
+  async clearFreePlaySlot(playDate, startTime, endTime) {
+    const participants = read<FreePlayParticipant[]>(KEYS.freePlayParticipants, [])
+    write(
+      KEYS.freePlayParticipants,
+      participants.filter((p) => !(p.playDate === playDate && p.startTime === startTime && p.endTime === endTime)),
+    )
   },
 }
 

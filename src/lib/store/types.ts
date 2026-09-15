@@ -23,6 +23,10 @@ import type {
   MiniMartOrderStatusLookup,
   MiniMartInventoryLog,
   MiniMartInventoryReason,
+  FreePlayParticipant,
+  JoinFreePlayInput,
+  JoinFreePlayResult,
+  FreePlaySlotCount,
 } from '../../types'
 
 /** Lightweight shape used only for availability/pricing checks — no customer PII. */
@@ -135,4 +139,14 @@ export interface DataStore {
   verifyMiniMartPayment(id: string): Promise<MiniMartOrder>
   /** Admin: marks a GCash payment rejected — the customer can then resubmit. */
   rejectMiniMartPayment(id: string): Promise<MiniMartOrder>
+
+  /** Public, PII-free join counts per Free Play slot on a given date. */
+  getFreePlaySlotCounts(date: string): Promise<FreePlaySlotCount[]>
+  /** Trusted join — re-validates the slot is still actually free server-side;
+   *  never creates or touches a booking. */
+  joinFreePlay(input: JoinFreePlayInput): Promise<JoinFreePlayResult>
+  /** Admin: every participant for a date (any slot), oldest first. */
+  listFreePlayParticipants(date: string): Promise<FreePlayParticipant[]>
+  removeFreePlayParticipant(id: string): Promise<void>
+  clearFreePlaySlot(playDate: string, startTime: string, endTime: string): Promise<void>
 }

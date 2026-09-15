@@ -1601,6 +1601,154 @@ grant select on mini_mart_inventory_logs to authenticated;
 -- No grants to anon at all — customers never see inventory history.
 
 -- ---------------------------------------------------------------------------
+-- free_play_participants — who joined the free 2 PM-5 PM court window on a
+-- given date/slot. No foreign key to a "session" table like Open Play has,
+-- because Free Play slots aren't admin-scheduled rows — they're the three
+-- fixed hourly blocks (14:00-15:00, 15:00-16:00, 16:00-17:00) computed on
+-- the fly from the same bookings/blocked_slots/open_play_sessions data the
+-- public Free Play section already reads. Joining never creates a booking
+-- and never touches any of those tables — purely an attendance list.
+-- ---------------------------------------------------------------------------
+create table if not exists free_play_participants (
+  id uuid primary key default gen_random_uuid(),
+  participant_name text not null,
+  play_date date not null,
+  start_time time not null,
+  end_time time not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists free_play_participants_slot_idx
+  on free_play_participants (play_date, start_time, end_time);
+
+-- Prevents the same name joining the same slot twice, race-proof (a unique
+-- index rejects the second concurrent insert outright, rather than two
+-- requests both passing a "not already registered" check before either has
+-- committed). join_free_play() below turns the resulting error into a
+-- friendly message instead of a raw constraint failure.
+create unique index if not exists free_play_participants_unique_per_slot
+  on free_play_participants (play_date, start_time, end_time, lower(trim(participant_name)));
+
+-- Public, PII-free join counts ("4 players joined") — never names.
+create or replace view free_play_participant_counts as
+  select play_date, start_time, end_time, count(*) as joined_count
+  from free_play_participants
+  group by play_date, start_time, end_time;
+
+-- ---------------------------------------------------------------------------
+-- join_free_play — the only way a customer joins a Free Play slot.
+-- SECURITY DEFINER so it can insert without the caller needing SELECT on
+-- free_play_participants (customers must never read who else has joined —
+-- only the anonymous per-slot count above). Re-validates the slot is a real
+-- Free Play block and is still actually free (no active booking, blocked
+-- slot, or Open Play session covering it) server-side, so a tampered
+-- request — or a booking that landed between page load and clicking Join —
+-- can never register someone for a slot that isn't genuinely free. No
+-- capacity cap yet (none exists in Settings) — joined_count is still
+-- returned so the UI updates immediately, ready for a limit to be added
+-- later without changing this function's shape.
+-- ---------------------------------------------------------------------------
+create or replace function join_free_play(
+  p_participant_name text,
+  p_play_date date,
+  p_start_time time,
+  p_end_time time
+)
+returns table (success boolean, reason text, participant_id uuid, joined_count integer)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  new_id uuid;
+  current_count integer;
+  conflict_exists boolean;
+  block_open_play boolean;
+begin
+  if p_participant_name is null or length(trim(p_participant_name)) = 0 then
+    return query select false, 'Enter your name.', null::uuid, 0;
+    return;
+  end if;
+
+  if p_start_time < time '14:00' or p_end_time > time '17:00' or p_end_time <= p_start_time then
+    return query select false, 'That is not a valid Free Play time slot.', null::uuid, 0;
+    return;
+  end if;
+
+  select exists (
+    select 1 from bookings
+    where booking_date = p_play_date
+      and status <> 'cancelled'
+      and start_time < p_end_time
+      and end_time > p_start_time
+  ) into conflict_exists;
+
+  if not conflict_exists then
+    select exists (
+      select 1 from blocked_slots
+      where date = p_play_date
+        and (all_day or (start_time < p_end_time and end_time > p_start_time))
+    ) into conflict_exists;
+  end if;
+
+  if not conflict_exists then
+    select coalesce(open_play_block_bookings, true) into block_open_play from settings where id = 1;
+    if block_open_play then
+      select exists (
+        select 1 from open_play_sessions
+        where session_date = p_play_date
+          and status = 'scheduled'
+          and start_time < p_end_time
+          and end_time > p_start_time
+      ) into conflict_exists;
+    end if;
+  end if;
+
+  if conflict_exists then
+    return query select false, 'This Free Play slot is no longer available.', null::uuid, 0;
+    return;
+  end if;
+
+  begin
+    insert into free_play_participants (participant_name, play_date, start_time, end_time)
+    values (trim(p_participant_name), p_play_date, p_start_time, p_end_time)
+    returning id into new_id;
+  exception when unique_violation then
+    return query select false, 'You may already be registered for this Free Play slot.', null::uuid, 0;
+    return;
+  end;
+
+  select count(*) into current_count from free_play_participants
+    where play_date = p_play_date and start_time = p_start_time and end_time = p_end_time;
+
+  return query select true, null::text, new_id, current_count;
+end;
+$$;
+
+revoke all on function join_free_play(text, date, time, time) from public;
+grant execute on function join_free_play(text, date, time, time) to anon, authenticated;
+
+alter table free_play_participants enable row level security;
+
+-- Same shape as open_play_registrations: no SELECT/INSERT policy for anon
+-- at all — every customer interaction goes through join_free_play() above,
+-- which inserts internally regardless of table grants. Only authenticated
+-- admins can read the roster or remove someone.
+drop policy if exists "admins can view free play participants" on free_play_participants;
+create policy "admins can view free play participants" on free_play_participants
+  for select to authenticated
+  using (true);
+
+drop policy if exists "admins can remove free play participants" on free_play_participants;
+create policy "admins can remove free play participants" on free_play_participants
+  for delete to authenticated
+  using (true);
+
+grant select on free_play_participant_counts to anon, authenticated;
+grant select, delete on free_play_participants to authenticated;
+-- Deliberately no grants at all for anon on the base table.
+
+-- ---------------------------------------------------------------------------
 -- Admin access
 -- ---------------------------------------------------------------------------
 -- Create your admin user under Supabase Dashboard → Authentication → Users

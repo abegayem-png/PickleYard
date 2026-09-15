@@ -14,6 +14,7 @@ import type {
   MiniMartOrder,
   MiniMartOrderItem,
   MiniMartInventoryLog,
+  FreePlayParticipant,
 } from '../../types'
 import { DEFAULT_SETTINGS } from '../../types'
 import { supabase } from '../supabaseClient'
@@ -254,6 +255,17 @@ function miniMartInventoryLogFromRow(row: Record<string, unknown>): MiniMartInve
     orderNumber: (row.order_number as string) ?? null,
     notes: (row.notes as string) ?? '',
     createdBy: (row.created_by as string) ?? null,
+    createdAt: row.created_at as string,
+  }
+}
+
+function freePlayParticipantFromRow(row: Record<string, unknown>): FreePlayParticipant {
+  return {
+    id: row.id as string,
+    participantName: row.participant_name as string,
+    playDate: row.play_date as string,
+    startTime: (row.start_time as string).slice(0, 5),
+    endTime: (row.end_time as string).slice(0, 5),
     createdAt: row.created_at as string,
   }
 }
@@ -815,5 +827,63 @@ export const supabaseStore: DataStore = {
     const { data, error } = await sb().from('mini_mart_orders').select('*, mini_mart_order_items(*)').eq('id', id).single()
     if (error) throw error
     return miniMartOrderFromRow(data)
+  },
+
+  async getFreePlaySlotCounts(date) {
+    const { data, error } = await sb().from('free_play_participant_counts').select('*').eq('play_date', date)
+    if (error) throw error
+    return (data ?? []).map((r) => ({
+      playDate: r.play_date as string,
+      startTime: String(r.start_time).slice(0, 5),
+      endTime: String(r.end_time).slice(0, 5),
+      joinedCount: Number(r.joined_count),
+    }))
+  },
+
+  async joinFreePlay(input) {
+    // Same reasoning as register_open_play/place_mini_mart_order: anon has
+    // no SELECT on free_play_participants (no one should be able to read
+    // who else has joined), so this goes through a SECURITY DEFINER RPC
+    // that re-validates the slot is still actually free server-side —
+    // never trusted from the client — before inserting.
+    const { data, error } = await sb().rpc('join_free_play', {
+      p_participant_name: input.participantName,
+      p_play_date: input.playDate,
+      p_start_time: input.startTime,
+      p_end_time: input.endTime,
+    })
+    if (error) throw error
+    const row = Array.isArray(data) ? data[0] : data
+    return {
+      success: Boolean(row?.success),
+      reason: (row?.reason as string) ?? null,
+      participantId: (row?.participant_id as string) ?? null,
+      joinedCount: Number(row?.joined_count ?? 0),
+    }
+  },
+
+  async listFreePlayParticipants(date) {
+    const { data, error } = await sb()
+      .from('free_play_participants')
+      .select('*')
+      .eq('play_date', date)
+      .order('created_at', { ascending: true })
+    if (error) throw error
+    return (data ?? []).map(freePlayParticipantFromRow)
+  },
+
+  async removeFreePlayParticipant(id) {
+    const { error } = await sb().from('free_play_participants').delete().eq('id', id)
+    if (error) throw error
+  },
+
+  async clearFreePlaySlot(playDate, startTime, endTime) {
+    const { error } = await sb()
+      .from('free_play_participants')
+      .delete()
+      .eq('play_date', playDate)
+      .eq('start_time', startTime)
+      .eq('end_time', endTime)
+    if (error) throw error
   },
 }
