@@ -86,6 +86,7 @@ export interface OpenPlaySession {
 
 export interface OpenPlaySessionWithCount extends OpenPlaySession {
   registeredCount: number
+  waitlistedCount: number
 }
 
 export interface OpenPlaySessionInput {
@@ -97,12 +98,15 @@ export interface OpenPlaySessionInput {
   source: OpenPlaySessionSource
 }
 
+export type OpenPlayRegistrationStatus = 'joined' | 'waitlisted'
+
 export interface OpenPlayRegistration {
   id: string
   sessionId: string
   playerName: string
   mobileNumber: string
   facebookName: string
+  status: OpenPlayRegistrationStatus
   createdAt: string
 }
 
@@ -111,6 +115,27 @@ export interface OpenPlayRegistrationInput {
   playerName: string
   mobileNumber: string
   facebookName?: string
+}
+
+/** Result of joining — tells the customer whether they got a spot or
+ *  landed on the waitlist, same "trusted, server-computed" shape as
+ *  PlaceOrderResult/JoinFreePlayResult. */
+export interface RegisterOpenPlayResult {
+  success: boolean
+  reason: string | null
+  registrationId: string | null
+  status: OpenPlayRegistrationStatus | null
+  registeredCount: number
+  remainingSlots: number
+}
+
+/** Minimum-safe public roster row — never mobile number, never the raw
+ *  player_name (only the server-computed "First L." display name). */
+export interface OpenPlayPublicRosterEntry {
+  registrationId: string
+  displayName: string
+  status: OpenPlayRegistrationStatus
+  joinedAt: string
 }
 
 export interface PromoCode {
@@ -216,6 +241,11 @@ export interface Settings {
   openPlayPrice: number // per player
   openPlayPlayerLimit: number
   openPlayBlockBookings: boolean
+  /** Owner control for the public player list: ON shows safe display names
+   *  ("Abegael G.") to every visitor, OFF shows only the joined/waitlisted
+   *  counts. Enforced server-side (get_open_play_public_roster), not just
+   *  hidden in the frontend. */
+  openPlayShowPlayerList: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -258,6 +288,7 @@ export const DEFAULT_SETTINGS: Settings = {
   openPlayPrice: 50,
   openPlayPlayerLimit: 16,
   openPlayBlockBookings: true,
+  openPlayShowPlayerList: true,
 }
 
 // ---------------------------------------------------------------------------

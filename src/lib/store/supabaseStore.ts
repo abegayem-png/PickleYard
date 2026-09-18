@@ -91,6 +91,7 @@ function settingsFromRow(row: Record<string, unknown>): Settings {
     openPlayPrice: Number(row.open_play_price ?? DEFAULT_SETTINGS.openPlayPrice),
     openPlayPlayerLimit: Number(row.open_play_player_limit ?? DEFAULT_SETTINGS.openPlayPlayerLimit),
     openPlayBlockBookings: Boolean(row.open_play_block_bookings ?? DEFAULT_SETTINGS.openPlayBlockBookings),
+    openPlayShowPlayerList: Boolean(row.open_play_show_player_list ?? DEFAULT_SETTINGS.openPlayShowPlayerList),
   }
 }
 
@@ -128,6 +129,7 @@ function settingsToRow(s: Partial<Settings>): Record<string, unknown> {
     openPlayPrice: 'open_play_price',
     openPlayPlayerLimit: 'open_play_player_limit',
     openPlayBlockBookings: 'open_play_block_bookings',
+    openPlayShowPlayerList: 'open_play_show_player_list',
   }
   const row: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(s)) {
@@ -173,6 +175,7 @@ function openPlayRegistrationFromRow(row: Record<string, unknown>): OpenPlayRegi
     playerName: row.player_name as string,
     mobileNumber: row.mobile_number as string,
     facebookName: (row.facebook_name as string) ?? '',
+    status: (row.status as OpenPlayRegistration['status']) ?? 'joined',
     createdAt: row.created_at as string,
   }
 }
@@ -525,10 +528,16 @@ export const supabaseStore: DataStore = {
     ])
     if (sessionsRes.error) throw sessionsRes.error
     if (countsRes.error) throw countsRes.error
-    const countMap = new Map<string, number>((countsRes.data ?? []).map((c) => [c.session_id as string, Number(c.registered_count)]))
+    const countMap = new Map<string, { registered: number; waitlisted: number }>(
+      (countsRes.data ?? []).map((c) => [
+        c.session_id as string,
+        { registered: Number(c.registered_count), waitlisted: Number(c.waitlisted_count ?? 0) },
+      ]),
+    )
     return (sessionsRes.data ?? []).map((row) => ({
       ...openPlaySessionFromRow(row),
-      registeredCount: countMap.get(row.id as string) ?? 0,
+      registeredCount: countMap.get(row.id as string)?.registered ?? 0,
+      waitlistedCount: countMap.get(row.id as string)?.waitlisted ?? 0,
     }))
   },
 
@@ -599,8 +608,9 @@ export const supabaseStore: DataStore = {
     // open_play_registrations (it holds player name/mobile/Facebook name —
     // other customers must never be able to read that), so `.insert().select()`
     // fails needing read access just to return the new row. This RPC inserts
-    // and validates (session open, not full) server-side and returns only
-    // non-sensitive fields — never the roster itself.
+    // and validates (session open, capacity) server-side and returns only
+    // non-sensitive fields — never the roster itself. A full session no
+    // longer means rejection: the RPC decides joined vs waitlisted itself.
     const { data, error } = await sb().rpc('register_open_play', {
       p_session_id: input.sessionId,
       p_player_name: input.playerName,
@@ -609,22 +619,30 @@ export const supabaseStore: DataStore = {
     })
     if (error) throw error
     const row = Array.isArray(data) ? data[0] : data
-    if (!row?.success) {
-      throw new Error(row?.reason || 'Could not complete registration.')
-    }
     return {
-      id: row.registration_id as string,
-      sessionId: input.sessionId,
-      playerName: input.playerName,
-      mobileNumber: input.mobileNumber,
-      facebookName: input.facebookName ?? '',
-      createdAt: new Date().toISOString(),
+      success: Boolean(row?.success),
+      reason: (row?.reason as string) ?? null,
+      registrationId: (row?.registration_id as string) ?? null,
+      status: (row?.status as OpenPlayRegistration['status']) ?? null,
+      registeredCount: Number(row?.registered_count ?? 0),
+      remainingSlots: Number(row?.remaining_slots ?? 0),
     }
   },
 
   async removeOpenPlayRegistration(id) {
     const { error } = await sb().from('open_play_registrations').delete().eq('id', id)
     if (error) throw error
+  },
+
+  async getOpenPlayPublicRoster(sessionId) {
+    const { data, error } = await sb().rpc('get_open_play_public_roster', { p_session_id: sessionId })
+    if (error) throw error
+    return (data ?? []).map((row: Record<string, unknown>) => ({
+      registrationId: row.registration_id as string,
+      displayName: row.display_name as string,
+      status: row.status as OpenPlayRegistration['status'],
+      joinedAt: row.joined_at as string,
+    }))
   },
 
   async listPromoCodes() {

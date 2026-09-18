@@ -261,6 +261,32 @@ function resolvePromo(code: string, bookingDate: string, startHour: number, dura
   }
 }
 
+/** Mirrors safe_display_name() in schema.sql: "First L." only, never the
+ *  raw name — used for demo mode's own public roster. */
+function safeDisplayName(fullName: string): string {
+  const trimmed = fullName.trim()
+  if (!trimmed) return 'Player'
+  const parts = trimmed.split(/\s+/)
+  if (parts.length === 1) return parts[0]
+  return `${parts[0]} ${parts[1][0].toUpperCase()}.`
+}
+
+/** Mirrors promote_next_waitlisted()/promote_on_limit_increase(): promotes
+ *  the oldest waitlisted registrations for one session up to its current
+ *  player_limit. Called whenever a joined registration is removed, or a
+ *  session's player_limit increases. */
+function promoteWaitlisted(registrations: OpenPlayRegistration[], sessionId: string, playerLimit: number): OpenPlayRegistration[] {
+  const joinedCount = registrations.filter((r) => r.sessionId === sessionId && r.status === 'joined').length
+  const slotsOpen = playerLimit - joinedCount
+  if (slotsOpen <= 0) return registrations
+  const waitlisted = registrations
+    .filter((r) => r.sessionId === sessionId && r.status === 'waitlisted')
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  const toPromote = new Set(waitlisted.slice(0, slotsOpen).map((r) => r.id))
+  if (toPromote.size === 0) return registrations
+  return registrations.map((r) => (toPromote.has(r.id) ? { ...r, status: 'joined' as const } : r))
+}
+
 export const localStore: DataStore = {
   async getSettings() {
     return read<Settings>(KEYS.settings, DEFAULT_SETTINGS)
@@ -474,7 +500,11 @@ export const localStore: DataStore = {
       .sort((a, b) =>
         a.sessionDate === b.sessionDate ? a.startTime.localeCompare(b.startTime) : a.sessionDate.localeCompare(b.sessionDate),
       )
-      .map((s) => ({ ...s, registeredCount: registrations.filter((r) => r.sessionId === s.id).length }))
+      .map((s) => ({
+        ...s,
+        registeredCount: registrations.filter((r) => r.sessionId === s.id && r.status === 'joined').length,
+        waitlistedCount: registrations.filter((r) => r.sessionId === s.id && r.status === 'waitlisted').length,
+      }))
   },
 
   async getOpenPlaySessionsForDate(date) {
@@ -513,8 +543,15 @@ export const localStore: DataStore = {
     const sessions = read<OpenPlaySession[]>(KEYS.openPlaySessions, [])
     const idx = sessions.findIndex((s) => s.id === id)
     if (idx === -1) throw new Error('Open Play session not found')
+    const previousLimit = sessions[idx].playerLimit
     sessions[idx] = { ...sessions[idx], ...patch }
     write(KEYS.openPlaySessions, sessions)
+
+    if (patch.playerLimit !== undefined && patch.playerLimit > previousLimit) {
+      const registrations = read<OpenPlayRegistration[]>(KEYS.openPlayRegistrations, [])
+      write(KEYS.openPlayRegistrations, promoteWaitlisted(registrations, id, patch.playerLimit))
+    }
+
     return sessions[idx]
   },
 
@@ -535,24 +572,75 @@ export const localStore: DataStore = {
   },
 
   async addOpenPlayRegistration(input) {
+    const sessions = read<OpenPlaySession[]>(KEYS.openPlaySessions, [])
+    const session = sessions.find((s) => s.id === input.sessionId)
+    if (!session) {
+      return { success: false, reason: 'This Open Play session could not be found.', registrationId: null, status: null, registeredCount: 0, remainingSlots: 0 }
+    }
+    if (session.status !== 'scheduled') {
+      return { success: false, reason: 'This Open Play session is no longer open for registration.', registrationId: null, status: null, registeredCount: 0, remainingSlots: 0 }
+    }
+    if (!input.playerName.trim() || !input.mobileNumber.trim()) {
+      return { success: false, reason: 'Name and mobile number are required.', registrationId: null, status: null, registeredCount: 0, remainingSlots: 0 }
+    }
+
     const registrations = read<OpenPlayRegistration[]>(KEYS.openPlayRegistrations, [])
+    let joinedCount = registrations.filter((r) => r.sessionId === input.sessionId && r.status === 'joined').length
+    const status: OpenPlayRegistration['status'] = joinedCount >= session.playerLimit ? 'waitlisted' : 'joined'
+
     const registration: OpenPlayRegistration = {
       id: newId(),
       createdAt: new Date().toISOString(),
-      ...input,
+      sessionId: input.sessionId,
+      playerName: input.playerName,
+      mobileNumber: input.mobileNumber,
       facebookName: input.facebookName ?? '',
+      status,
     }
     registrations.push(registration)
     write(KEYS.openPlayRegistrations, registrations)
-    return registration
+
+    if (status === 'joined') joinedCount += 1
+
+    return {
+      success: true,
+      reason: null,
+      registrationId: registration.id,
+      status,
+      registeredCount: joinedCount,
+      remainingSlots: Math.max(session.playerLimit - joinedCount, 0),
+    }
   },
 
   async removeOpenPlayRegistration(id) {
     const registrations = read<OpenPlayRegistration[]>(KEYS.openPlayRegistrations, [])
-    write(
-      KEYS.openPlayRegistrations,
-      registrations.filter((r) => r.id !== id),
-    )
+    const removed = registrations.find((r) => r.id === id)
+    const remaining = registrations.filter((r) => r.id !== id)
+
+    if (removed?.status === 'joined') {
+      const sessions = read<OpenPlaySession[]>(KEYS.openPlaySessions, [])
+      const session = sessions.find((s) => s.id === removed.sessionId)
+      if (session) {
+        write(KEYS.openPlayRegistrations, promoteWaitlisted(remaining, removed.sessionId, session.playerLimit))
+        return
+      }
+    }
+    write(KEYS.openPlayRegistrations, remaining)
+  },
+
+  async getOpenPlayPublicRoster(sessionId) {
+    const settings = read<Settings>(KEYS.settings, DEFAULT_SETTINGS)
+    if (!settings.openPlayShowPlayerList) return []
+    const registrations = read<OpenPlayRegistration[]>(KEYS.openPlayRegistrations, [])
+    return registrations
+      .filter((r) => r.sessionId === sessionId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((r) => ({
+        registrationId: r.id,
+        displayName: safeDisplayName(r.playerName),
+        status: r.status,
+        joinedAt: r.createdAt,
+      }))
   },
 
   async listPromoCodes() {

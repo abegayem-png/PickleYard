@@ -3,7 +3,7 @@ import { useSettings } from '../../context/SettingsContext'
 import { useOpenPlaySessions } from '../../hooks/useOpenPlaySessions'
 import { formatDateLong, formatTime12h, todayISO } from '../../lib/time'
 import { getErrorMessage } from '../../lib/errors'
-import type { OpenPlayRegistration, OpenPlaySessionWithCount } from '../../types'
+import type { OpenPlayRegistration, OpenPlaySessionWithCount, RegisterOpenPlayResult } from '../../types'
 import Badge from '../../components/ui/Badge'
 import Button from '../../components/ui/Button'
 import Card from '../../components/ui/Card'
@@ -146,7 +146,7 @@ function SessionCard({
   onUpdate: (id: string, patch: Partial<{ sessionDate: string; startTime: string; endTime: string; pricePerPlayer: number; playerLimit: number }>) => Promise<void>
   onCancel: (id: string) => Promise<void>
   listRegistrations: (sessionId: string) => Promise<OpenPlayRegistration[]>
-  addRegistration: (sessionId: string, name: string, mobile: string, facebookName?: string) => Promise<void>
+  addRegistration: (sessionId: string, name: string, mobile: string, facebookName?: string) => Promise<RegisterOpenPlayResult>
   removeRegistration: (id: string) => Promise<void>
 }) {
   const [editing, setEditing] = useState(false)
@@ -178,6 +178,7 @@ function SessionCard({
             <p className="font-display font-bold text-cream">{formatDateLong(session.sessionDate)}</p>
             <Badge tone="cream">{session.source === 'recurring' ? 'Recurring' : 'Specific'}</Badge>
             {isFull && <Badge tone="blocked">OPEN PLAY FULL</Badge>}
+            {session.waitlistedCount > 0 && <Badge tone="pending">{session.waitlistedCount} WAITLISTED</Badge>}
           </div>
           <p className="mt-1 text-sm text-cream-dim">
             {formatTime12h(session.startTime)} – {formatTime12h(session.endTime)} · ₱{session.pricePerPlayer}/player
@@ -239,7 +240,7 @@ function PlayersPanel({
 }: {
   sessionId: string
   listRegistrations: (sessionId: string) => Promise<OpenPlayRegistration[]>
-  addRegistration: (sessionId: string, name: string, mobile: string, facebookName?: string) => Promise<void>
+  addRegistration: (sessionId: string, name: string, mobile: string, facebookName?: string) => Promise<RegisterOpenPlayResult>
   removeRegistration: (id: string) => Promise<void>
 }) {
   const [players, setPlayers] = useState<OpenPlayRegistration[]>([])
@@ -249,6 +250,7 @@ function PlayersPanel({
   const [facebookName, setFacebookName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
 
   async function refresh() {
     setLoading(true)
@@ -271,8 +273,14 @@ function PlayersPanel({
     }
     setBusy(true)
     setError(null)
+    setNotice(null)
     try {
-      await addRegistration(sessionId, name.trim(), mobile.trim(), facebookName.trim())
+      const result = await addRegistration(sessionId, name.trim(), mobile.trim(), facebookName.trim())
+      if (!result.success) {
+        setError(result.reason || 'Failed to add player.')
+        return
+      }
+      if (result.status === 'waitlisted') setNotice(`${name.trim()} was added to the waitlist — the session is already full.`)
       setName('')
       setMobile('')
       setFacebookName('')
@@ -301,7 +309,10 @@ function PlayersPanel({
           {players.map((p) => (
             <div key={p.id} className="flex items-center justify-between gap-3 rounded-lg bg-court-900/50 px-3 py-2">
               <div>
-                <p className="text-sm font-semibold text-cream">{p.playerName}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold text-cream">{p.playerName}</p>
+                  {p.status === 'waitlisted' && <Badge tone="pending">Waitlisted</Badge>}
+                </div>
                 <p className="text-xs text-cream-dim">
                   {p.mobileNumber}
                   {p.facebookName && ` · FB: ${p.facebookName}`}
@@ -348,6 +359,7 @@ function PlayersPanel({
           {busy ? 'Adding…' : 'Add Player'}
         </button>
       </div>
+      {notice && <p className="mt-2 text-xs font-semibold text-amber-300">{notice}</p>}
       {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
     </div>
   )

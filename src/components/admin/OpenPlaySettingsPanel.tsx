@@ -13,6 +13,7 @@ type OpenPlayFormFields = Pick<
   Settings,
   | 'openPlayEnabled'
   | 'openPlayBlockBookings'
+  | 'openPlayShowPlayerList'
   | 'openPlayScheduleType'
   | 'openPlayRecurringDays'
   | 'openPlayRecurringStartDate'
@@ -133,10 +134,31 @@ export default function OpenPlaySettingsPanel() {
             bookings on that date only — other dates are unaffected.
           </p>
 
+          <label className="mt-4 flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={form.openPlayShowPlayerList}
+              onChange={(e) => set('openPlayShowPlayerList', e.target.checked)}
+              className="h-4 w-4 accent-lime-500"
+            />
+            <span className="text-sm font-semibold text-cream">Show Player List Publicly</span>
+          </label>
+          <p className="mt-1 text-xs text-cream-dim">
+            {form.openPlayShowPlayerList
+              ? 'Everyone can see who has joined (first name + last initial only — never a phone number or full name) and the waitlist, without logging in.'
+              : 'Visitors only see the joined/waitlisted counts (e.g. "8 / 16 Players Joined") — no names. You and other admins still see full details here.'}
+          </p>
+
           <Button
             size="md"
             className="mt-5"
-            onClick={() => save('Visibility', { openPlayEnabled: form.openPlayEnabled, openPlayBlockBookings: form.openPlayBlockBookings })}
+            onClick={() =>
+              save('Visibility', {
+                openPlayEnabled: form.openPlayEnabled,
+                openPlayBlockBookings: form.openPlayBlockBookings,
+                openPlayShowPlayerList: form.openPlayShowPlayerList,
+              })
+            }
             disabled={saving !== null}
           >
             {saving === 'Visibility' ? 'Saving…' : 'Save'}

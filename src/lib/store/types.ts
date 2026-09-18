@@ -27,6 +27,8 @@ import type {
   JoinFreePlayInput,
   JoinFreePlayResult,
   FreePlaySlotCount,
+  RegisterOpenPlayResult,
+  OpenPlayPublicRosterEntry,
 } from '../../types'
 
 /** Lightweight shape used only for availability/pricing checks — no customer PII. */
@@ -87,9 +89,15 @@ export interface DataStore {
   updateOpenPlaySession(id: string, patch: Partial<OpenPlaySessionInput>): Promise<OpenPlaySession>
   cancelOpenPlaySession(id: string): Promise<OpenPlaySession>
 
+  /** Admin: full roster (any status), including PII, for the private dashboard. */
   listOpenPlayRegistrations(sessionId: string): Promise<OpenPlayRegistration[]>
-  addOpenPlayRegistration(input: OpenPlayRegistrationInput): Promise<OpenPlayRegistration>
+  /** Trusted join — the RPC (or its demo-mode equivalent) decides joined vs
+   *  waitlisted server-side; never trusted from the client. */
+  addOpenPlayRegistration(input: OpenPlayRegistrationInput): Promise<RegisterOpenPlayResult>
   removeOpenPlayRegistration(id: string): Promise<void>
+  /** Public: minimum-safe roster for "View Players" — display name + status
+   *  only, and empty when the owner has the player list turned off. */
+  getOpenPlayPublicRoster(sessionId: string): Promise<OpenPlayPublicRosterEntry[]>
 
   /** Admin: every promo code, any status. */
   listPromoCodes(): Promise<PromoCode[]>

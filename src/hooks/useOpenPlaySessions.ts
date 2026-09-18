@@ -62,8 +62,9 @@ export function useOpenPlaySessions() {
 
   const addRegistration = useCallback(
     async (sessionId: string, playerName: string, mobileNumber: string, facebookName?: string) => {
-      await store.addOpenPlayRegistration({ sessionId, playerName, mobileNumber, facebookName })
-      await refresh()
+      const result = await store.addOpenPlayRegistration({ sessionId, playerName, mobileNumber, facebookName })
+      if (result.success) await refresh()
+      return result
     },
     [refresh],
   )

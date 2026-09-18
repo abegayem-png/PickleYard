@@ -581,6 +581,11 @@ create table if not exists settings (
   open_play_price numeric(10, 2) not null default 50,
   open_play_player_limit integer not null default 16,
   open_play_block_bookings boolean not null default true,
+  -- Owner control for Feature 3 (public player list). Default ON: visitors
+  -- see safe display names ("Abegael G."); OFF hides names and shows only
+  -- the "X / Y Joined" count, enforced server-side in
+  -- get_open_play_public_roster() below, not just hidden in the frontend.
+  open_play_show_player_list boolean not null default true,
   constraint settings_singleton check (id = 1)
 );
 
@@ -601,6 +606,7 @@ alter table settings add column if not exists open_play_end_time time not null d
 alter table settings add column if not exists open_play_price numeric(10, 2) not null default 50;
 alter table settings add column if not exists open_play_player_limit integer not null default 16;
 alter table settings add column if not exists open_play_block_bookings boolean not null default true;
+alter table settings add column if not exists open_play_show_player_list boolean not null default true;
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'settings_open_play_schedule_type_check') then
     alter table settings add constraint settings_open_play_schedule_type_check
@@ -640,21 +646,155 @@ create table if not exists open_play_registrations (
   player_name text not null,
   mobile_number text not null,
   facebook_name text,
+  -- 'waitlisted' when a session is already at player_limit at join time.
+  -- promote_next_waitlisted() / promote_on_limit_increase() below are the
+  -- only things that ever flip this back to 'joined'.
+  status text not null default 'joined' check (status in ('joined', 'waitlisted')),
   created_at timestamptz not null default now()
 );
 
--- Defensive guard in case this table already existed from an earlier,
--- partial version of this script — safe no-op if the column is present.
+-- Defensive guards in case this table already existed from an earlier,
+-- partial version of this script — safe no-ops if the columns are present.
 alter table open_play_registrations add column if not exists facebook_name text;
+alter table open_play_registrations add column if not exists status text not null default 'joined';
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'open_play_registrations_status_check') then
+    alter table open_play_registrations add constraint open_play_registrations_status_check
+      check (status in ('joined', 'waitlisted'));
+  end if;
+end $$;
 
 create index if not exists open_play_registrations_session_idx on open_play_registrations (session_id);
 
 -- Public, PII-free registration counts per session (customers need "8/16
--- registered" without being able to read other players' names/numbers).
+-- Joined" / "3 Waiting" without being able to read other players' names or
+-- mobile numbers — safe even when the player list itself is hidden by the
+-- open_play_show_player_list setting, since this view has no names at all).
 create or replace view open_play_registration_counts as
-  select session_id, count(*) as registered_count
+  select
+    session_id,
+    count(*) filter (where status = 'joined') as registered_count,
+    count(*) filter (where status = 'waitlisted') as waitlisted_count
   from open_play_registrations
   group by session_id;
+
+-- First name + last initial only (e.g. "Abegael Gayem" -> "Abegael G.") —
+-- what the public player list is allowed to show, never the raw
+-- player_name. A single-word name is shown as-is; an empty/null name falls
+-- back to a generic label rather than leaking an empty row.
+create or replace function safe_display_name(full_name text)
+returns text
+language sql
+immutable
+as $$
+  select case
+    when full_name is null or length(trim(full_name)) = 0 then 'Player'
+    when array_length(regexp_split_to_array(trim(full_name), '\s+'), 1) = 1
+      then (regexp_split_to_array(trim(full_name), '\s+'))[1]
+    else (regexp_split_to_array(trim(full_name), '\s+'))[1]
+      || ' ' || upper(left((regexp_split_to_array(trim(full_name), '\s+'))[2], 1)) || '.'
+  end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- get_open_play_public_roster — the only way the public frontend ever sees
+-- who's playing. Returns the minimum safe fields (id, display name, status,
+-- join order) for one session — never mobile_number/facebook_name, never
+-- the raw player_name, and never the whole table. Enforces the
+-- open_play_show_player_list owner setting itself (returns zero rows when
+-- it's off) rather than trusting the frontend to hide names, so a public
+-- caller can't just call this directly to bypass that toggle.
+-- ---------------------------------------------------------------------------
+create or replace function get_open_play_public_roster(p_session_id uuid)
+returns table (registration_id uuid, display_name text, status text, joined_at timestamptz)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  show_names boolean;
+begin
+  select coalesce(open_play_show_player_list, true) into show_names from settings where id = 1;
+  if not show_names then
+    return;
+  end if;
+
+  return query
+    select r.id, safe_display_name(r.player_name), r.status, r.created_at
+    from open_play_registrations r
+    where r.session_id = p_session_id
+    order by r.created_at asc;
+end;
+$$;
+
+revoke all on function get_open_play_public_roster(uuid) from public;
+grant execute on function get_open_play_public_roster(uuid) to anon, authenticated;
+
+-- Returns a joined registration's spot to the next-oldest waitlisted
+-- registration for the same session, the moment it's actually removed —
+-- covers both an admin removing someone and the cascade delete when a
+-- whole session is deleted. Never fires for a waitlisted row being removed
+-- (nothing to promote from that).
+create or replace function promote_next_waitlisted() returns trigger as $$
+declare
+  next_reg record;
+begin
+  if old.status = 'joined' then
+    select * into next_reg from open_play_registrations
+      where session_id = old.session_id and status = 'waitlisted'
+      order by created_at asc
+      limit 1
+      for update;
+    if found then
+      update open_play_registrations set status = 'joined' where id = next_reg.id;
+    end if;
+  end if;
+  return old;
+end;
+$$ language plpgsql security definer set search_path = public;
+
+drop trigger if exists trg_promote_next_waitlisted on open_play_registrations;
+create trigger trg_promote_next_waitlisted
+  after delete on open_play_registrations
+  for each row
+  execute function promote_next_waitlisted();
+
+-- Raising a session's player_limit (an admin editing an existing session)
+-- is also a legitimate way a spot opens up — promotes waitlisted players,
+-- oldest first, up to the new capacity.
+create or replace function promote_on_limit_increase() returns trigger as $$
+declare
+  slot record;
+  current_joined integer;
+begin
+  if new.player_limit <= old.player_limit then
+    return new;
+  end if;
+
+  select count(*) into current_joined from open_play_registrations
+    where session_id = new.id and status = 'joined';
+
+  for slot in
+    select * from open_play_registrations
+      where session_id = new.id and status = 'waitlisted'
+      order by created_at asc
+      for update
+  loop
+    if current_joined >= new.player_limit then exit; end if;
+    update open_play_registrations set status = 'joined' where id = slot.id;
+    current_joined := current_joined + 1;
+  end loop;
+
+  return new;
+end;
+$$ language plpgsql security definer set search_path = public;
+
+drop trigger if exists trg_promote_on_limit_increase on open_play_sessions;
+create trigger trg_promote_on_limit_increase
+  after update on open_play_sessions
+  for each row
+  when (new.player_limit is distinct from old.player_limit)
+  execute function promote_on_limit_increase();
 
 -- ---------------------------------------------------------------------------
 -- register_open_play — the only way any client (customer or admin) joins an
@@ -664,7 +804,15 @@ create or replace view open_play_registration_counts as
 -- read another customer's). Locks the session row for the duration of the
 -- check-then-insert so two simultaneous joins can't both slip in over the
 -- player limit. Returns only non-sensitive fields — never the roster.
+--
+-- A session at capacity no longer rejects the join outright — it inserts
+-- as 'waitlisted' instead, so the return shape gained a `status` column.
+-- Postgres treats a changed RETURNS TABLE shape as requiring the function
+-- to be dropped first, same convention as every other signature change in
+-- this file.
 -- ---------------------------------------------------------------------------
+drop function if exists register_open_play(uuid, text, text, text);
+
 create or replace function register_open_play(
   p_session_id uuid,
   p_player_name text,
@@ -675,6 +823,7 @@ returns table (
   success boolean,
   reason text,
   registration_id uuid,
+  status text,
   registered_count integer,
   remaining_slots integer
 )
@@ -684,41 +833,42 @@ set search_path = public
 as $$
 declare
   sess record;
-  current_count integer;
+  joined_count integer;
   new_id uuid;
+  new_status text;
 begin
   select * into sess from open_play_sessions where id = p_session_id for update;
 
   if not found then
-    return query select false, 'This Open Play session could not be found.', null::uuid, 0, 0;
+    return query select false, 'This Open Play session could not be found.', null::uuid, null::text, 0, 0;
     return;
   end if;
 
   if sess.status <> 'scheduled' then
-    return query select false, 'This Open Play session is no longer open for registration.', null::uuid, 0, 0;
+    return query select false, 'This Open Play session is no longer open for registration.', null::uuid, null::text, 0, 0;
     return;
   end if;
 
   if p_player_name is null or length(trim(p_player_name)) = 0
      or p_mobile_number is null or length(trim(p_mobile_number)) = 0 then
-    return query select false, 'Name and mobile number are required.', null::uuid, 0, 0;
+    return query select false, 'Name and mobile number are required.', null::uuid, null::text, 0, 0;
     return;
   end if;
 
-  select count(*) into current_count from open_play_registrations where session_id = p_session_id;
+  select count(*) into joined_count from open_play_registrations
+    where session_id = p_session_id and status = 'joined';
 
-  if current_count >= sess.player_limit then
-    return query select false, 'This session is full.', null::uuid, current_count, 0;
-    return;
-  end if;
+  new_status := case when joined_count >= sess.player_limit then 'waitlisted' else 'joined' end;
 
-  insert into open_play_registrations (session_id, player_name, mobile_number, facebook_name)
-  values (p_session_id, trim(p_player_name), trim(p_mobile_number), nullif(trim(coalesce(p_facebook_name, '')), ''))
+  insert into open_play_registrations (session_id, player_name, mobile_number, facebook_name, status)
+  values (p_session_id, trim(p_player_name), trim(p_mobile_number), nullif(trim(coalesce(p_facebook_name, '')), ''), new_status)
   returning id into new_id;
 
-  current_count := current_count + 1;
+  if new_status = 'joined' then
+    joined_count := joined_count + 1;
+  end if;
 
-  return query select true, null::text, new_id, current_count, greatest(sess.player_limit - current_count, 0);
+  return query select true, null::text, new_id, new_status, joined_count, greatest(sess.player_limit - joined_count, 0);
 end;
 $$;
 
@@ -871,11 +1021,14 @@ create policy "admins can manage open play sessions" on open_play_sessions
   using (true)
   with check (true);
 
--- open_play_registrations: contains PII, so only admins can read the full
--- list (used by "View Players"). Nobody gets a direct INSERT policy —
--- joining (customer or admin-added) goes through register_open_play()
--- above, which bypasses RLS internally instead of needing one. Only admins
--- can remove a registration.
+-- open_play_registrations: contains PII (mobile number, and the raw
+-- player_name — the public roster only ever sees safe_display_name of it),
+-- so only admins get a direct SELECT policy on the table itself, for their
+-- private dashboard. The *public* "View Players" list goes entirely through
+-- get_open_play_public_roster() above, which never needs — and never gets
+-- — a table grant of its own. Nobody gets a direct INSERT policy either —
+-- joining (customer or admin-added) goes through register_open_play(),
+-- which bypasses RLS internally. Only admins can remove a registration.
 alter table open_play_registrations enable row level security;
 
 drop policy if exists "admins can view open play registrations" on open_play_registrations;
@@ -891,6 +1044,19 @@ create policy "admins can remove open play registrations" on open_play_registrat
   using (true);
 
 grant select on open_play_registration_counts to anon, authenticated;
+
+-- Realtime: lets the public player list and the admin roster update the
+-- instant someone joins, cancels, or moves off the waitlist. Idempotent —
+-- `alter publication ... add table` errors if run twice.
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'open_play_registrations'
+  ) then
+    alter publication supabase_realtime add table open_play_registrations;
+  end if;
+end $$;
 
 -- ---------------------------------------------------------------------------
 -- Base table grants
