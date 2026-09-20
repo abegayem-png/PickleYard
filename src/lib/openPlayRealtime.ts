@@ -26,3 +26,26 @@ export function subscribeToOpenPlayRegistrations(sessionId: string, onChange: ()
     client.removeChannel(channel)
   }
 }
+
+/** Same idea as subscribeToOpenPlayRegistrations, for one session's chat
+ *  thread (open_play_messages) — new/deleted messages call `onChange` so
+ *  the chat modal can refetch. No-op in demo mode. */
+export function subscribeToOpenPlayMessages(sessionId: string, onChange: () => void): () => void {
+  if (!isSupabaseConfigured || !supabase) {
+    return () => {}
+  }
+  const client = supabase
+
+  const channel = client
+    .channel(`open-play-messages-${sessionId}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'open_play_messages', filter: `open_play_session_id=eq.${sessionId}` },
+      () => onChange(),
+    )
+    .subscribe()
+
+  return () => {
+    client.removeChannel(channel)
+  }
+}

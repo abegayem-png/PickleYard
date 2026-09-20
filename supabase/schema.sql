@@ -586,6 +586,9 @@ create table if not exists settings (
   -- the "X / Y Joined" count, enforced server-side in
   -- get_open_play_public_roster() below, not just hidden in the frontend.
   open_play_show_player_list boolean not null default true,
+  -- Global chat master switch. Effective availability for one session is
+  -- this AND that session's own chat_enabled column.
+  open_play_chat_enabled boolean not null default true,
   constraint settings_singleton check (id = 1)
 );
 
@@ -607,6 +610,7 @@ alter table settings add column if not exists open_play_price numeric(10, 2) not
 alter table settings add column if not exists open_play_player_limit integer not null default 16;
 alter table settings add column if not exists open_play_block_bookings boolean not null default true;
 alter table settings add column if not exists open_play_show_player_list boolean not null default true;
+alter table settings add column if not exists open_play_chat_enabled boolean not null default true;
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'settings_open_play_schedule_type_check') then
     alter table settings add constraint settings_open_play_schedule_type_check
@@ -630,8 +634,13 @@ create table if not exists open_play_sessions (
   player_limit integer not null,
   status text not null default 'scheduled' check (status in ('scheduled', 'cancelled')),
   source text not null default 'specific' check (source in ('specific', 'recurring')),
+  -- Per-session chat kill switch (admin-only). Effective availability is
+  -- this AND the global settings.open_play_chat_enabled master switch.
+  chat_enabled boolean not null default true,
   created_at timestamptz not null default now()
 );
+
+alter table open_play_sessions add column if not exists chat_enabled boolean not null default true;
 
 create index if not exists open_play_sessions_date_idx on open_play_sessions (session_date);
 
@@ -874,6 +883,156 @@ $$;
 
 revoke all on function register_open_play(uuid, text, text, text) from public;
 grant execute on function register_open_play(uuid, text, text, text) to anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- open_play_messages — one simple chat thread per Open Play session.
+-- Access (both read and write) is gated entirely by a registration id — the
+-- same random uuid register_open_play() already hands back to the client
+-- at join time and that the public roster/chat UI stores locally as "my
+-- registration for this session". Nobody ever authenticates with an
+-- account; owning that uuid (proven server-side against
+-- open_play_registrations, never just trusted as a name typed in the
+-- browser) is what proves "I actually joined this session". No direct
+-- table grants for anon/authenticated at all — every read and write goes
+-- through the two SECURITY DEFINER functions below.
+-- ---------------------------------------------------------------------------
+create table if not exists open_play_messages (
+  id uuid primary key default gen_random_uuid(),
+  open_play_session_id uuid not null references open_play_sessions (id) on delete cascade,
+  participant_id uuid not null references open_play_registrations (id) on delete cascade,
+  participant_name text not null,
+  message text not null check (length(trim(message)) > 0 and length(message) <= 500),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists open_play_messages_session_idx on open_play_messages (open_play_session_id, created_at);
+
+-- get_open_play_messages — the only way anyone reads a session's chat.
+-- Returns an empty set (not an error) for anyone who isn't a *currently
+-- joined* participant of that exact session, so a wrong/stale/waitlisted
+-- participant id just sees nothing rather than leaking that the session
+-- has messages at all.
+create or replace function get_open_play_messages(p_session_id uuid, p_participant_id uuid)
+returns table (id uuid, participant_name text, message text, created_at timestamptz, is_me boolean)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  authorized boolean;
+begin
+  select exists (
+    select 1 from open_play_registrations
+    where id = p_participant_id and session_id = p_session_id and status = 'joined'
+  ) into authorized;
+
+  if not authorized then
+    return;
+  end if;
+
+  return query
+    select m.id, m.participant_name, m.message, m.created_at, (m.participant_id = p_participant_id)
+    from open_play_messages m
+    where m.open_play_session_id = p_session_id
+    order by m.created_at asc;
+end;
+$$;
+
+revoke all on function get_open_play_messages(uuid, uuid) from public;
+grant execute on function get_open_play_messages(uuid, uuid) to anon, authenticated;
+
+-- send_open_play_message — the only way anyone posts. Re-checks the same
+-- "currently joined this exact session" condition as the read path, plus
+-- both chat kill switches (global setting AND this session's own column),
+-- and always uses the participant's own on-file player_name — never a
+-- name the client sends — so nobody can post under a different display
+-- name than the one they registered with.
+create or replace function send_open_play_message(
+  p_session_id uuid,
+  p_participant_id uuid,
+  p_message text
+)
+returns table (success boolean, reason text, message_id uuid, created_at timestamptz)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  reg record;
+  global_enabled boolean;
+  session_enabled boolean;
+  trimmed text;
+  new_id uuid;
+  new_created_at timestamptz;
+begin
+  select * into reg from open_play_registrations
+    where id = p_participant_id and session_id = p_session_id and status = 'joined';
+
+  if not found then
+    return query select false, 'You must join this Open Play session before posting in chat.', null::uuid, null::timestamptz;
+    return;
+  end if;
+
+  select coalesce(open_play_chat_enabled, true) into global_enabled from settings where id = 1;
+  select coalesce(chat_enabled, true) into session_enabled from open_play_sessions where id = p_session_id;
+
+  if not (coalesce(global_enabled, true) and coalesce(session_enabled, true)) then
+    return query select false, 'Chat is currently unavailable for this Open Play session.', null::uuid, null::timestamptz;
+    return;
+  end if;
+
+  trimmed := trim(coalesce(p_message, ''));
+  if length(trimmed) = 0 then
+    return query select false, 'Message cannot be empty.', null::uuid, null::timestamptz;
+    return;
+  end if;
+  if length(trimmed) > 500 then
+    return query select false, 'Message is too long (500 characters max).', null::uuid, null::timestamptz;
+    return;
+  end if;
+
+  insert into open_play_messages (open_play_session_id, participant_id, participant_name, message)
+  values (p_session_id, p_participant_id, reg.player_name, trimmed)
+  returning id, created_at into new_id, new_created_at;
+
+  return query select true, null::text, new_id, new_created_at;
+end;
+$$;
+
+revoke all on function send_open_play_message(uuid, uuid, text) from public;
+grant execute on function send_open_play_message(uuid, uuid, text) to anon, authenticated;
+
+alter table open_play_messages enable row level security;
+
+-- No SELECT/INSERT policy for anon or authenticated at all — every public
+-- read/write goes through the two functions above. Only admins get a
+-- direct policy, for the private moderation view (view + delete a
+-- message); there's no admin UPDATE — a message is either there or
+-- deleted, never silently edited.
+drop policy if exists "admins can view open play messages" on open_play_messages;
+create policy "admins can view open play messages" on open_play_messages
+  for select to authenticated
+  using (true);
+
+drop policy if exists "admins can delete open play messages" on open_play_messages;
+create policy "admins can delete open play messages" on open_play_messages
+  for delete to authenticated
+  using (true);
+
+grant select, delete on open_play_messages to authenticated;
+-- Deliberately no grants at all for anon on the base table.
+
+-- Realtime: new chat messages appear for everyone in that session's thread
+-- without a refresh.
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'open_play_messages'
+  ) then
+    alter publication supabase_realtime add table open_play_messages;
+  end if;
+end $$;
 
 -- ---------------------------------------------------------------------------
 -- Public availability view — exposes only what's needed to compute open

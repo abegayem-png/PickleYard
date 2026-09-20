@@ -3,7 +3,7 @@ import { useSettings } from '../../context/SettingsContext'
 import { useOpenPlaySessions } from '../../hooks/useOpenPlaySessions'
 import { formatDateLong, formatTime12h, todayISO } from '../../lib/time'
 import { getErrorMessage } from '../../lib/errors'
-import type { OpenPlayRegistration, OpenPlaySessionWithCount, RegisterOpenPlayResult } from '../../types'
+import type { OpenPlayMessageAdmin, OpenPlayRegistration, OpenPlaySessionWithCount, RegisterOpenPlayResult } from '../../types'
 import Badge from '../../components/ui/Badge'
 import Button from '../../components/ui/Button'
 import Card from '../../components/ui/Card'
@@ -61,6 +61,8 @@ export default function AdminOpenPlay() {
               listRegistrations={openPlay.listRegistrations}
               addRegistration={openPlay.addRegistration}
               removeRegistration={openPlay.removeRegistration}
+              listMessages={openPlay.listMessages}
+              deleteMessage={openPlay.deleteMessage}
             />
           ))}
         </div>
@@ -139,23 +141,29 @@ function SessionCard({
   listRegistrations,
   addRegistration,
   removeRegistration,
+  listMessages,
+  deleteMessage,
 }: {
   session: OpenPlaySessionWithCount
   expanded: boolean
   onToggle: () => void
-  onUpdate: (id: string, patch: Partial<{ sessionDate: string; startTime: string; endTime: string; pricePerPlayer: number; playerLimit: number }>) => Promise<void>
+  onUpdate: (id: string, patch: Partial<{ sessionDate: string; startTime: string; endTime: string; pricePerPlayer: number; playerLimit: number; chatEnabled: boolean }>) => Promise<void>
   onCancel: (id: string) => Promise<void>
   listRegistrations: (sessionId: string) => Promise<OpenPlayRegistration[]>
   addRegistration: (sessionId: string, name: string, mobile: string, facebookName?: string) => Promise<RegisterOpenPlayResult>
   removeRegistration: (id: string) => Promise<void>
+  listMessages: (sessionId: string) => Promise<OpenPlayMessageAdmin[]>
+  deleteMessage: (messageId: string) => Promise<void>
 }) {
   const [editing, setEditing] = useState(false)
+  const [showChat, setShowChat] = useState(false)
   const [edit, setEdit] = useState({
     sessionDate: session.sessionDate,
     startTime: session.startTime,
     endTime: session.endTime,
     pricePerPlayer: session.pricePerPlayer,
     playerLimit: session.playerLimit,
+    chatEnabled: session.chatEnabled,
   })
   const [savingEdit, setSavingEdit] = useState(false)
   const isFull = session.registeredCount >= session.playerLimit
@@ -192,6 +200,12 @@ function SessionCard({
             {expanded ? 'Hide Players' : 'View Players'}
           </button>
           <button
+            onClick={() => setShowChat((v) => !v)}
+            className="rounded-lg bg-white/5 px-3 py-1.5 text-xs font-bold text-cream hover:bg-white/10"
+          >
+            {showChat ? 'Hide Chat' : 'View Chat'}
+          </button>
+          <button
             onClick={() => setEditing((v) => !v)}
             className="rounded-lg bg-white/5 px-3 py-1.5 text-xs font-bold text-cream hover:bg-white/10"
           >
@@ -214,6 +228,15 @@ function SessionCard({
           <TimeField label="End" value={edit.endTime} onChange={(v) => setEdit((e) => ({ ...e, endTime: v }))} />
           <NumberField label="Price (₱)" value={edit.pricePerPlayer} onChange={(v) => setEdit((e) => ({ ...e, pricePerPlayer: v }))} />
           <NumberField label="Player Limit" value={edit.playerLimit} onChange={(v) => setEdit((e) => ({ ...e, playerLimit: v }))} />
+          <label className="col-span-2 flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={edit.chatEnabled}
+              onChange={(e) => setEdit((prev) => ({ ...prev, chatEnabled: e.target.checked }))}
+              className="h-4 w-4 accent-lime-500"
+            />
+            <span className="text-sm font-semibold text-cream">Enable chat for this session</span>
+          </label>
           <Button size="md" className="col-span-2" onClick={handleSaveEdit} disabled={savingEdit}>
             {savingEdit ? 'Saving…' : 'Save Changes'}
           </Button>
@@ -228,6 +251,8 @@ function SessionCard({
           removeRegistration={removeRegistration}
         />
       )}
+
+      {showChat && <ChatModerationPanel sessionId={session.id} listMessages={listMessages} deleteMessage={deleteMessage} />}
     </Card>
   )
 }
@@ -361,6 +386,77 @@ function PlayersPanel({
       </div>
       {notice && <p className="mt-2 text-xs font-semibold text-amber-300">{notice}</p>}
       {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+    </div>
+  )
+}
+
+function ChatModerationPanel({
+  sessionId,
+  listMessages,
+  deleteMessage,
+}: {
+  sessionId: string
+  listMessages: (sessionId: string) => Promise<OpenPlayMessageAdmin[]>
+  deleteMessage: (messageId: string) => Promise<void>
+}) {
+  const [messages, setMessages] = useState<OpenPlayMessageAdmin[]>([])
+  const [loading, setLoading] = useState(true)
+  const [busyId, setBusyId] = useState<string | null>(null)
+
+  async function refresh() {
+    setLoading(true)
+    try {
+      setMessages(await listMessages(sessionId))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId])
+
+  async function handleDelete(id: string) {
+    if (!confirm('Delete this message? This cannot be undone.')) return
+    setBusyId(id)
+    try {
+      await deleteMessage(id)
+      await refresh()
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  return (
+    <div className="mt-4 border-t border-white/10 pt-4">
+      <p className="mb-3 font-display text-sm font-bold uppercase tracking-wide text-cream-dim">Chat Messages</p>
+      {loading ? (
+        <p className="text-sm text-cream-dim">Loading…</p>
+      ) : messages.length === 0 ? (
+        <p className="text-sm text-cream-dim">No messages yet.</p>
+      ) : (
+        <div className="max-h-72 space-y-2 overflow-y-auto">
+          {messages.map((m) => (
+            <div key={m.id} className="flex items-start justify-between gap-3 rounded-lg bg-court-900/50 px-3 py-2">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold text-cream">{m.participantName}</p>
+                  <p className="text-[10px] text-cream-dim">{new Date(m.createdAt).toLocaleString()}</p>
+                </div>
+                <p className="whitespace-pre-wrap break-words text-sm text-cream-dim">{m.message}</p>
+              </div>
+              <button
+                onClick={() => handleDelete(m.id)}
+                disabled={busyId !== null}
+                className="shrink-0 rounded-lg bg-red-400/10 px-2.5 py-1 text-xs font-bold text-red-300 hover:bg-red-400/20 disabled:opacity-50"
+              >
+                {busyId === m.id ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

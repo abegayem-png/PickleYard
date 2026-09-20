@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { useSettings } from '../../context/SettingsContext'
 import { useOpenPlaySessions } from '../../hooks/useOpenPlaySessions'
 import { useOpenPlayRoster } from '../../hooks/useOpenPlayRoster'
+import { useOpenPlayChat } from '../../hooks/useOpenPlayChat'
 import { getMyOpenPlayRegistrationId, saveMyOpenPlayRegistration } from '../../lib/myOpenPlayRegistrations'
-import { formatDateShort, formatTime12h, todayISO } from '../../lib/time'
+import { formatDateLong, formatDateShort, formatTime12h, formatTimeRange12h, todayISO } from '../../lib/time'
 import { getErrorMessage } from '../../lib/errors'
 import type { OpenPlaySessionWithCount, RegisterOpenPlayResult } from '../../types'
 import Button from '../ui/Button'
@@ -57,6 +58,7 @@ function OpenPlayCard({
   const roster = useOpenPlayRoster(session.id)
   const [joining, setJoining] = useState(false)
   const [showPlayers, setShowPlayers] = useState(false)
+  const [showChat, setShowChat] = useState(false)
   const [name, setName] = useState('')
   const [mobile, setMobile] = useState('')
   const [facebookName, setFacebookName] = useState('')
@@ -68,6 +70,7 @@ function OpenPlayCard({
   const myRegistrationId = getMyOpenPlayRegistrationId(session.id)
   const alreadyJoined = Boolean(outcome?.success) || myRegistrationId !== null
   const myStatus = outcome?.status ?? roster.roster.find((r) => r.registrationId === myRegistrationId)?.status ?? null
+  const chatAvailable = settings.openPlayChatEnabled && session.chatEnabled
 
   async function handleJoin() {
     if (!name.trim() || !mobile.trim()) {
@@ -121,13 +124,24 @@ function OpenPlayCard({
 
       <div className="my-3 h-px bg-white/10" />
 
-      <button
-        type="button"
-        onClick={() => setShowPlayers(true)}
-        className="mb-3 w-full rounded-xl bg-white/5 py-2.5 text-sm font-bold text-cream hover:bg-white/10"
-      >
-        View Players
-      </button>
+      <div className="mb-3 flex gap-2">
+        <button
+          type="button"
+          onClick={() => setShowPlayers(true)}
+          className="flex-1 rounded-xl bg-white/5 py-2.5 text-sm font-bold text-cream hover:bg-white/10"
+        >
+          View Players
+        </button>
+        {alreadyJoined && myStatus === 'joined' && (
+          <button
+            type="button"
+            onClick={() => setShowChat(true)}
+            className="flex-1 rounded-xl bg-white/5 py-2.5 text-sm font-bold text-cream hover:bg-white/10"
+          >
+            Open Play Chat
+          </button>
+        )}
+      </div>
 
       {alreadyJoined && !joining ? (
         <p className="text-center text-sm font-semibold text-lime-500">
@@ -160,6 +174,10 @@ function OpenPlayCard({
             placeholder="Facebook Name (optional)"
             className="h-11 w-full rounded-xl border border-white/10 bg-court-800 px-3 text-sm text-cream placeholder:text-cream-dim/50 focus:border-lime-500/50 focus:outline-none"
           />
+          <p className="text-xs text-cream-dim">
+            Your name will be visible on the Open Play player list. Players who join may also see your name in the Open
+            Play chat.
+          </p>
           {error && <p className="text-xs font-medium text-red-400">{error}</p>}
           <div className="flex gap-2">
             <Button size="md" fullWidth onClick={handleJoin} disabled={submitting}>
@@ -191,6 +209,8 @@ function OpenPlayCard({
           }}
         />
       )}
+
+      {showChat && <OpenPlayChatModal session={session} chatAvailable={chatAvailable} onClose={() => setShowChat(false)} />}
     </Card>
   )
 }
@@ -229,35 +249,47 @@ function WhosPlayingModal({
     <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/60 sm:items-center sm:p-4">
       <div className="max-h-[85vh] w-full overflow-y-auto rounded-t-3xl bg-court-900 p-5 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] sm:max-w-sm sm:rounded-3xl">
         <div className="mb-1 flex items-center justify-between">
-          <h2 className="font-display text-xl font-extrabold text-cream">Who's Playing</h2>
+          <h2 className="font-display text-xl font-extrabold text-cream">Open Play Players</h2>
           <button onClick={onClose} className="grid h-9 w-9 place-items-center rounded-full bg-white/5 text-cream hover:bg-white/10">
             ✕
           </button>
         </div>
-        <p className="mb-4 text-sm text-cream-dim">
-          {session.registeredCount} of {session.playerLimit} Players
+        <p className="text-sm text-cream-dim">{formatDateLong(session.sessionDate)}</p>
+        <p className="text-sm text-cream-dim">{formatTimeRange12h(session.startTime, session.endTime)}</p>
+        <p className="mb-4 mt-1 font-display text-sm font-bold text-lime-500">
+          {session.registeredCount} / {session.playerLimit} Players Joined
         </p>
 
         {roster.loading ? (
           <div className="h-24 animate-pulse rounded-2xl bg-white/5" />
+        ) : roster.error ? (
+          <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-center">
+            <p className="text-sm text-red-300">{roster.error}</p>
+            <button onClick={roster.refresh} className="mt-2 text-xs font-bold text-cream underline underline-offset-2">
+              Try again
+            </button>
+          </div>
         ) : !settings.openPlayShowPlayerList ? (
           <p className="rounded-xl bg-white/5 p-4 text-center text-sm text-cream-dim">
             The player list is currently private — only the joined/waitlisted counts are shown.
           </p>
         ) : roster.joined.length === 0 ? (
-          <p className="text-sm text-cream-dim">No one has joined yet — be the first!</p>
+          <p className="text-sm text-cream-dim">No players have joined yet.</p>
         ) : (
-          <div className="space-y-1.5">
-            {roster.joined.map((p, i) => (
-              <p key={p.registrationId} className="text-sm text-cream">
-                <span className="text-lime-500">✓</span> {i + 1}. {p.displayName}
-                {p.registrationId === myRegistrationId && <span className="ml-1 font-bold text-lime-400">— YOU</span>}
-              </p>
-            ))}
-          </div>
+          <>
+            <p className="mb-2 text-xs font-bold uppercase tracking-widest text-cream-dim">Players</p>
+            <div className="space-y-1.5">
+              {roster.joined.map((p, i) => (
+                <p key={p.registrationId} className="text-sm text-cream">
+                  {i + 1}. {p.displayName}
+                  {p.registrationId === myRegistrationId && <span className="ml-1 font-bold text-lime-400">— YOU</span>}
+                </p>
+              ))}
+            </div>
+          </>
         )}
 
-        {settings.openPlayShowPlayerList && roster.waitlisted.length > 0 && (
+        {settings.openPlayShowPlayerList && !roster.error && roster.waitlisted.length > 0 && (
           <div className="mt-4 border-t border-white/10 pt-4">
             <p className="font-display text-xs font-extrabold uppercase tracking-widest text-amber-300">Waitlist</p>
             <p className="mb-2 text-xs text-cream-dim">{roster.waitlisted.length} Players Waiting</p>
@@ -282,6 +314,101 @@ function WhosPlayingModal({
             </Button>
           )}
         </div>
+      </div>
+    </div>
+  )
+}
+
+function OpenPlayChatModal({
+  session,
+  chatAvailable,
+  onClose,
+}: {
+  session: OpenPlaySessionWithCount
+  chatAvailable: boolean
+  onClose: () => void
+}) {
+  const chat = useOpenPlayChat(session.id)
+  const [text, setText] = useState('')
+  const [sendError, setSendError] = useState<string | null>(null)
+
+  async function handleSend() {
+    if (!text.trim()) return
+    setSendError(null)
+    const result = await chat.sendMessage(text.trim())
+    if (!result.success) {
+      setSendError(result.reason || 'Could not send your message. Please try again.')
+      return
+    }
+    setText('')
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/60 sm:items-center sm:p-4">
+      <div className="flex h-[85vh] w-full flex-col rounded-t-3xl bg-court-900 p-5 pb-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[70vh] sm:max-w-sm sm:rounded-3xl">
+        <div className="mb-1 flex items-center justify-between">
+          <h2 className="font-display text-xl font-extrabold text-cream">Open Play Chat</h2>
+          <button onClick={onClose} className="grid h-9 w-9 place-items-center rounded-full bg-white/5 text-cream hover:bg-white/10">
+            ✕
+          </button>
+        </div>
+        <p className="mb-3 text-xs text-cream-dim">
+          {formatDateShort(session.sessionDate)} · {formatTimeRange12h(session.startTime, session.endTime)}
+        </p>
+
+        <div className="min-h-0 flex-1 overflow-y-auto rounded-2xl bg-court-800/60 p-3">
+          {!chatAvailable ? (
+            <p className="mt-6 text-center text-sm text-cream-dim">Chat is currently unavailable for this Open Play session.</p>
+          ) : !chat.canAccess ? (
+            <p className="mt-6 text-center text-sm text-cream-dim">Join this Open Play session to view and post in the chat.</p>
+          ) : chat.loading ? (
+            <div className="h-24 animate-pulse rounded-2xl bg-white/5" />
+          ) : chat.error ? (
+            <div className="mt-6 text-center">
+              <p className="text-sm text-red-300">{chat.error}</p>
+              <button onClick={chat.refresh} className="mt-2 text-xs font-bold text-cream underline underline-offset-2">
+                Try again
+              </button>
+            </div>
+          ) : chat.messages.length === 0 ? (
+            <p className="mt-6 text-center text-sm text-cream-dim">No messages yet — say hi!</p>
+          ) : (
+            <div className="space-y-3">
+              {chat.messages.map((m) => (
+                <div key={m.id} className={m.isMe ? 'text-right' : ''}>
+                  <p className="text-xs font-bold text-lime-500">{m.isMe ? 'You' : m.participantName}</p>
+                  <p className="whitespace-pre-wrap text-sm text-cream">{m.message}</p>
+                  <p className="text-[10px] text-cream-dim">{new Date(m.createdAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {chatAvailable && chat.canAccess && (
+          <div className="mt-3 shrink-0">
+            {sendError && <p className="mb-2 text-xs font-medium text-red-400">{sendError}</p>}
+            <div className="flex items-end gap-2">
+              <textarea
+                value={text}
+                onChange={(e) => setText(e.target.value.slice(0, 500))}
+                placeholder="Type a message…"
+                rows={1}
+                maxLength={500}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    handleSend()
+                  }
+                }}
+                className="h-11 flex-1 resize-none rounded-xl border border-white/10 bg-court-800 px-3 py-2.5 text-sm text-cream placeholder:text-cream-dim/50 focus:border-lime-500/50 focus:outline-none"
+              />
+              <Button size="md" onClick={handleSend} disabled={chat.sending || !text.trim()}>
+                Send
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

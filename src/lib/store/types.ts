@@ -29,6 +29,9 @@ import type {
   FreePlaySlotCount,
   RegisterOpenPlayResult,
   OpenPlayPublicRosterEntry,
+  OpenPlayMessage,
+  OpenPlayMessageAdmin,
+  SendOpenPlayMessageResult,
 } from '../../types'
 
 /** Lightweight shape used only for availability/pricing checks — no customer PII. */
@@ -98,6 +101,18 @@ export interface DataStore {
   /** Public: minimum-safe roster for "View Players" — display name + status
    *  only, and empty when the owner has the player list turned off. */
   getOpenPlayPublicRoster(sessionId: string): Promise<OpenPlayPublicRosterEntry[]>
+
+  /** Public: a session's chat thread — empty for anyone whose participantId
+   *  isn't a currently-joined registration for that exact session (never an
+   *  error just for not being authorized; that's indistinguishable from "no
+   *  messages yet" by design). */
+  getOpenPlayMessages(sessionId: string, participantId: string): Promise<OpenPlayMessage[]>
+  /** Trusted post — re-verifies participantId is joined, chat is enabled
+   *  (global + per-session), and the length limit, server-side. */
+  sendOpenPlayMessage(sessionId: string, participantId: string, message: string): Promise<SendOpenPlayMessageResult>
+  /** Admin: every message for a session, for moderation. */
+  listOpenPlayMessagesAdmin(sessionId: string): Promise<OpenPlayMessageAdmin[]>
+  deleteOpenPlayMessage(id: string): Promise<void>
 
   /** Admin: every promo code, any status. */
   listPromoCodes(): Promise<PromoCode[]>

@@ -14,6 +14,7 @@ type OpenPlayFormFields = Pick<
   | 'openPlayEnabled'
   | 'openPlayBlockBookings'
   | 'openPlayShowPlayerList'
+  | 'openPlayChatEnabled'
   | 'openPlayScheduleType'
   | 'openPlayRecurringDays'
   | 'openPlayRecurringStartDate'
@@ -149,6 +150,21 @@ export default function OpenPlaySettingsPanel() {
               : 'Visitors only see the joined/waitlisted counts (e.g. "8 / 16 Players Joined") — no names. You and other admins still see full details here.'}
           </p>
 
+          <label className="mt-4 flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={form.openPlayChatEnabled}
+              onChange={(e) => set('openPlayChatEnabled', e.target.checked)}
+              className="h-4 w-4 accent-lime-500"
+            />
+            <span className="text-sm font-semibold text-cream">Open Play Chat</span>
+          </label>
+          <p className="mt-1 text-xs text-cream-dim">
+            {form.openPlayChatEnabled
+              ? 'Players who join a session can chat with each other. Turn off any individual session\'s chat in the Open Play dashboard.'
+              : 'Chat is off everywhere, regardless of any individual session\'s own chat setting.'}
+          </p>
+
           <Button
             size="md"
             className="mt-5"
@@ -157,6 +173,7 @@ export default function OpenPlaySettingsPanel() {
                 openPlayEnabled: form.openPlayEnabled,
                 openPlayBlockBookings: form.openPlayBlockBookings,
                 openPlayShowPlayerList: form.openPlayShowPlayerList,
+                openPlayChatEnabled: form.openPlayChatEnabled,
               })
             }
             disabled={saving !== null}

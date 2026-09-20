@@ -15,6 +15,7 @@ import type {
   MiniMartInventoryLog,
   MiniMartInventoryReason,
   FreePlayParticipant,
+  OpenPlayMessageAdmin,
 } from '../../types'
 import { DEFAULT_SETTINGS } from '../../types'
 import { calculatePrice, generateBookingReference } from '../pricing'
@@ -34,6 +35,7 @@ const KEYS = {
   miniMartOrderSeq: 'pkl_mini_mart_order_seq',
   miniMartInventoryLogs: 'pkl_mini_mart_inventory_logs',
   freePlayParticipants: 'pkl_free_play_participants',
+  openPlayMessages: 'pkl_open_play_messages',
 }
 
 /** Mirrors join_free_play()'s server-side conflict check: a slot only
@@ -519,6 +521,7 @@ export const localStore: DataStore = {
       status: 'scheduled',
       createdAt: new Date().toISOString(),
       ...input,
+      chatEnabled: input.chatEnabled ?? true,
     }
     sessions.push(session)
     write(KEYS.openPlaySessions, sessions)
@@ -533,6 +536,7 @@ export const localStore: DataStore = {
         status: 'scheduled',
         createdAt: new Date().toISOString(),
         ...input,
+        chatEnabled: input.chatEnabled ?? true,
       }),
     )
     write(KEYS.openPlaySessions, [...sessions, ...created])
@@ -641,6 +645,73 @@ export const localStore: DataStore = {
         status: r.status,
         joinedAt: r.createdAt,
       }))
+  },
+
+  async getOpenPlayMessages(sessionId, participantId) {
+    // Mirrors get_open_play_messages(): only a currently-joined registration
+    // for this exact session can read — everyone else just gets an empty
+    // list, same as "not authorized" looks like server-side.
+    const registrations = read<OpenPlayRegistration[]>(KEYS.openPlayRegistrations, [])
+    const reg = registrations.find((r) => r.id === participantId && r.sessionId === sessionId && r.status === 'joined')
+    if (!reg) return []
+
+    const messages = read<OpenPlayMessageAdmin[]>(KEYS.openPlayMessages, [])
+    return messages
+      .filter((m) => m.sessionId === sessionId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((m) => ({
+        id: m.id,
+        participantName: m.participantName,
+        message: m.message,
+        createdAt: m.createdAt,
+        isMe: m.participantId === participantId,
+      }))
+  },
+
+  async sendOpenPlayMessage(sessionId, participantId, message) {
+    const registrations = read<OpenPlayRegistration[]>(KEYS.openPlayRegistrations, [])
+    const reg = registrations.find((r) => r.id === participantId && r.sessionId === sessionId && r.status === 'joined')
+    if (!reg) {
+      return { success: false, reason: 'You must join this Open Play session before posting in chat.', messageId: null, createdAt: null }
+    }
+
+    const settings = read<Settings>(KEYS.settings, DEFAULT_SETTINGS)
+    const sessions = read<OpenPlaySession[]>(KEYS.openPlaySessions, [])
+    const session = sessions.find((s) => s.id === sessionId)
+    if (!settings.openPlayChatEnabled || !(session?.chatEnabled ?? true)) {
+      return { success: false, reason: 'Chat is currently unavailable for this Open Play session.', messageId: null, createdAt: null }
+    }
+
+    const trimmed = message.trim()
+    if (!trimmed) return { success: false, reason: 'Message cannot be empty.', messageId: null, createdAt: null }
+    if (trimmed.length > 500) return { success: false, reason: 'Message is too long (500 characters max).', messageId: null, createdAt: null }
+
+    const messages = read<OpenPlayMessageAdmin[]>(KEYS.openPlayMessages, [])
+    const now = new Date().toISOString()
+    const record: OpenPlayMessageAdmin = {
+      id: newId(),
+      sessionId,
+      participantId,
+      participantName: reg.playerName,
+      message: trimmed,
+      createdAt: now,
+    }
+    write(KEYS.openPlayMessages, [...messages, record])
+
+    return { success: true, reason: null, messageId: record.id, createdAt: now }
+  },
+
+  async listOpenPlayMessagesAdmin(sessionId) {
+    const messages = read<OpenPlayMessageAdmin[]>(KEYS.openPlayMessages, [])
+    return messages.filter((m) => m.sessionId === sessionId).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  },
+
+  async deleteOpenPlayMessage(id) {
+    const messages = read<OpenPlayMessageAdmin[]>(KEYS.openPlayMessages, [])
+    write(
+      KEYS.openPlayMessages,
+      messages.filter((m) => m.id !== id),
+    )
   },
 
   async listPromoCodes() {

@@ -81,6 +81,9 @@ export interface OpenPlaySession {
   playerLimit: number
   status: OpenPlaySessionStatus
   source: OpenPlaySessionSource
+  /** Per-session chat kill switch. Effective availability is this AND the
+   *  global Settings.openPlayChatEnabled master switch. */
+  chatEnabled: boolean
   createdAt: string
 }
 
@@ -96,6 +99,7 @@ export interface OpenPlaySessionInput {
   pricePerPlayer: number
   playerLimit: number
   source: OpenPlaySessionSource
+  chatEnabled?: boolean
 }
 
 export type OpenPlayRegistrationStatus = 'joined' | 'waitlisted'
@@ -136,6 +140,39 @@ export interface OpenPlayPublicRosterEntry {
   displayName: string
   status: OpenPlayRegistrationStatus
   joinedAt: string
+}
+
+// ---------------------------------------------------------------------------
+// Open Play chat — one simple thread per session. Access (read and write)
+// is gated by a registration id, never trusted from a typed name; see
+// get_open_play_messages/send_open_play_message in schema.sql.
+// ---------------------------------------------------------------------------
+export interface OpenPlayMessage {
+  id: string
+  participantName: string
+  message: string
+  createdAt: string
+  /** True when this message was posted by the current device's own
+   *  registration — lets the UI align/style "your" messages differently. */
+  isMe: boolean
+}
+
+/** Admin-only shape (includes participantId, for moderation/attribution —
+ *  never shown publicly). */
+export interface OpenPlayMessageAdmin {
+  id: string
+  sessionId: string
+  participantId: string
+  participantName: string
+  message: string
+  createdAt: string
+}
+
+export interface SendOpenPlayMessageResult {
+  success: boolean
+  reason: string | null
+  messageId: string | null
+  createdAt: string | null
 }
 
 export interface PromoCode {
@@ -246,6 +283,9 @@ export interface Settings {
    *  counts. Enforced server-side (get_open_play_public_roster), not just
    *  hidden in the frontend. */
   openPlayShowPlayerList: boolean
+  /** Global chat master switch. Effective per session is this AND that
+   *  session's own chatEnabled field. */
+  openPlayChatEnabled: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -289,6 +329,7 @@ export const DEFAULT_SETTINGS: Settings = {
   openPlayPlayerLimit: 16,
   openPlayBlockBookings: true,
   openPlayShowPlayerList: true,
+  openPlayChatEnabled: true,
 }
 
 // ---------------------------------------------------------------------------

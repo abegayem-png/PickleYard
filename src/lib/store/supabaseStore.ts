@@ -92,6 +92,7 @@ function settingsFromRow(row: Record<string, unknown>): Settings {
     openPlayPlayerLimit: Number(row.open_play_player_limit ?? DEFAULT_SETTINGS.openPlayPlayerLimit),
     openPlayBlockBookings: Boolean(row.open_play_block_bookings ?? DEFAULT_SETTINGS.openPlayBlockBookings),
     openPlayShowPlayerList: Boolean(row.open_play_show_player_list ?? DEFAULT_SETTINGS.openPlayShowPlayerList),
+    openPlayChatEnabled: Boolean(row.open_play_chat_enabled ?? DEFAULT_SETTINGS.openPlayChatEnabled),
   }
 }
 
@@ -130,6 +131,7 @@ function settingsToRow(s: Partial<Settings>): Record<string, unknown> {
     openPlayPlayerLimit: 'open_play_player_limit',
     openPlayBlockBookings: 'open_play_block_bookings',
     openPlayShowPlayerList: 'open_play_show_player_list',
+    openPlayChatEnabled: 'open_play_chat_enabled',
   }
   const row: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(s)) {
@@ -153,6 +155,7 @@ function openPlaySessionFromRow(row: Record<string, unknown>): OpenPlaySession {
     playerLimit: row.player_limit as number,
     status: row.status as OpenPlaySession['status'],
     source: row.source as OpenPlaySession['source'],
+    chatEnabled: Boolean(row.chat_enabled ?? true),
     createdAt: row.created_at as string,
   }
 }
@@ -162,6 +165,7 @@ function openPlaySessionToRow(input: Partial<import('../../types').OpenPlaySessi
   if (input.sessionDate !== undefined) row.session_date = input.sessionDate
   if (input.startTime !== undefined) row.start_time = input.startTime
   if (input.endTime !== undefined) row.end_time = input.endTime
+  if (input.chatEnabled !== undefined) row.chat_enabled = input.chatEnabled
   if (input.pricePerPlayer !== undefined) row.price_per_player = input.pricePerPlayer
   if (input.playerLimit !== undefined) row.player_limit = input.playerLimit
   if (input.source !== undefined) row.source = input.source
@@ -643,6 +647,62 @@ export const supabaseStore: DataStore = {
       status: row.status as OpenPlayRegistration['status'],
       joinedAt: row.joined_at as string,
     }))
+  },
+
+  async getOpenPlayMessages(sessionId, participantId) {
+    // SECURITY DEFINER RPC: returns an empty list (not an error) for anyone
+    // whose participantId isn't a currently-joined registration for this
+    // exact session — anon has no direct SELECT on open_play_messages at all.
+    const { data, error } = await sb().rpc('get_open_play_messages', {
+      p_session_id: sessionId,
+      p_participant_id: participantId,
+    })
+    if (error) throw error
+    return (data ?? []).map((row: Record<string, unknown>) => ({
+      id: row.id as string,
+      participantName: row.participant_name as string,
+      message: row.message as string,
+      createdAt: row.created_at as string,
+      isMe: Boolean(row.is_me),
+    }))
+  },
+
+  async sendOpenPlayMessage(sessionId, participantId, message) {
+    const { data, error } = await sb().rpc('send_open_play_message', {
+      p_session_id: sessionId,
+      p_participant_id: participantId,
+      p_message: message,
+    })
+    if (error) throw error
+    const row = Array.isArray(data) ? data[0] : data
+    return {
+      success: Boolean(row?.success),
+      reason: (row?.reason as string) ?? null,
+      messageId: (row?.message_id as string) ?? null,
+      createdAt: (row?.created_at as string) ?? null,
+    }
+  },
+
+  async listOpenPlayMessagesAdmin(sessionId) {
+    const { data, error } = await sb()
+      .from('open_play_messages')
+      .select('*')
+      .eq('open_play_session_id', sessionId)
+      .order('created_at', { ascending: true })
+    if (error) throw error
+    return (data ?? []).map((row) => ({
+      id: row.id as string,
+      sessionId: row.open_play_session_id as string,
+      participantId: row.participant_id as string,
+      participantName: row.participant_name as string,
+      message: row.message as string,
+      createdAt: row.created_at as string,
+    }))
+  },
+
+  async deleteOpenPlayMessage(id) {
+    const { error } = await sb().from('open_play_messages').delete().eq('id', id)
+    if (error) throw error
   },
 
   async listPromoCodes() {

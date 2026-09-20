@@ -77,6 +77,14 @@ export function useOpenPlaySessions() {
     [refresh],
   )
 
+  const listMessages = useCallback((sessionId: string) => {
+    return store.listOpenPlayMessagesAdmin(sessionId)
+  }, [])
+
+  const deleteMessage = useCallback((messageId: string) => {
+    return store.deleteOpenPlayMessage(messageId)
+  }, [])
+
   return {
     sessions,
     loading,
@@ -88,5 +96,7 @@ export function useOpenPlaySessions() {
     listRegistrations,
     addRegistration,
     removeRegistration,
+    listMessages,
+    deleteMessage,
   }
 }
