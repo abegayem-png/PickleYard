@@ -96,6 +96,7 @@ function OpenPlayCard({
   }
 
   return (
+    <>
     <Card className="p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -199,19 +200,29 @@ function OpenPlayCard({
         </>
       )}
 
-      {showPlayers && (
-        <WhosPlayingModal
-          session={session}
-          onClose={() => setShowPlayers(false)}
-          onRequestJoin={() => {
-            setShowPlayers(false)
-            setJoining(true)
-          }}
-        />
-      )}
-
-      {showChat && <OpenPlayChatModal session={session} chatAvailable={chatAvailable} onClose={() => setShowChat(false)} />}
     </Card>
+
+    {/* Rendered as a sibling of Card, not inside it — Card uses backdrop-blur,
+        and a `backdrop-filter` (or transform/filter/will-change) ancestor
+        creates a new containing block for `position: fixed` descendants,
+        which was confining this modal's "fixed inset-0" to the Card's own
+        small box instead of the full viewport (the actual cause of the
+        "blank screen" — the overlay was rendering, just squeezed into a tiny
+        region instead of covering the page). */}
+    {showPlayers && (
+      <WhosPlayingModal
+        session={session}
+        roster={roster}
+        onClose={() => setShowPlayers(false)}
+        onRequestJoin={() => {
+          setShowPlayers(false)
+          setJoining(true)
+        }}
+      />
+    )}
+
+    {showChat && <OpenPlayChatModal session={session} chatAvailable={chatAvailable} onClose={() => setShowChat(false)} />}
+    </>
   )
 }
 
@@ -232,22 +243,34 @@ function RosterPreview({ joined, onViewAll }: { joined: { displayName: string }[
 
 function WhosPlayingModal({
   session,
+  roster,
   onClose,
   onRequestJoin,
 }: {
   session: OpenPlaySessionWithCount
+  /** Reuses the same OpenPlayCard's already-fetched roster (and its single
+   *  live subscription) instead of fetching again — a second independent
+   *  useOpenPlayRoster() call here used to open a second Realtime
+   *  subscription to the exact same channel topic the instant this modal
+   *  mounted, which is what was crashing the whole page to a blank screen. */
+  roster: ReturnType<typeof useOpenPlayRoster>
   onClose: () => void
   onRequestJoin: () => void
 }) {
   const { settings } = useSettings()
-  const roster = useOpenPlayRoster(session.id)
   const myRegistrationId = getMyOpenPlayRegistrationId(session.id)
   const alreadyJoined = myRegistrationId !== null
   const spotsLeft = Math.max(0, session.playerLimit - session.registeredCount)
 
   return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/60 sm:items-center sm:p-4">
-      <div className="max-h-[85vh] w-full overflow-y-auto rounded-t-3xl bg-court-900 p-5 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] sm:max-w-sm sm:rounded-3xl">
+    <div
+      className="fixed inset-0 z-40 flex items-end justify-center bg-black/60 sm:items-center sm:p-4"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[85vh] w-full overflow-y-auto rounded-t-3xl bg-court-900 p-5 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] sm:max-w-sm sm:rounded-3xl"
+      >
         <div className="mb-1 flex items-center justify-between">
           <h2 className="font-display text-xl font-extrabold text-cream">Open Play Players</h2>
           <button onClick={onClose} className="grid h-9 w-9 place-items-center rounded-full bg-white/5 text-cream hover:bg-white/10">
