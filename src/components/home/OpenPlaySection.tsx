@@ -5,7 +5,7 @@ import { useOpenPlayRoster } from '../../hooks/useOpenPlayRoster'
 import { useOpenPlayChat } from '../../hooks/useOpenPlayChat'
 import { getMyOpenPlayRegistrationId, saveMyOpenPlayRegistration } from '../../lib/myOpenPlayRegistrations'
 import { formatDateLong, formatDateShort, formatTime12h, formatTimeRange12h, todayISO } from '../../lib/time'
-import { getErrorMessage } from '../../lib/errors'
+import { getErrorMessage, logError } from '../../lib/errors'
 import type { OpenPlaySessionWithCount, RegisterOpenPlayResult } from '../../types'
 import Button from '../ui/Button'
 import Card from '../ui/Card'
@@ -306,11 +306,20 @@ function AddPlayerModal({
     try {
       const result = await onAdd(name.trim())
       if (!result.success) {
-        setError(result.reason || 'Could not add player. Please try again.')
+        setError(result.reason || 'Player could not be added. Please try again.')
         return
       }
       setAdded(name.trim())
       setName('')
+    } catch (err) {
+      // The previous version had no catch here at all: if the request threw
+      // (a real backend/network failure, not just a business-rule rejection
+      // like "session full"), the exception silently escaped as an
+      // unhandled rejection — no error shown, no success shown, the button
+      // just reset. This is what "nothing happens when I click Add Player"
+      // actually was.
+      logError('Failed to add Open Play player:', err)
+      setError(getErrorMessage(err, 'Player could not be added. Please try again.'))
     } finally {
       setSubmitting(false)
     }
@@ -345,23 +354,30 @@ function AddPlayerModal({
               </button>
             </div>
 
-            <label className="block">
-              <span className="mb-1.5 block text-sm font-semibold text-cream-dim">Player Name</span>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Full Name"
-                autoFocus
-                className="h-12 w-full rounded-xl border border-white/10 bg-court-800 px-4 text-base text-cream placeholder:text-cream-dim/50 focus:border-lime-500/50 focus:outline-none focus:ring-2 focus:ring-lime-500/40"
-              />
-            </label>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                handleAdd()
+              }}
+            >
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-semibold text-cream-dim">Player Name</span>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Full Name"
+                  autoFocus
+                  className="h-12 w-full rounded-xl border border-white/10 bg-court-800 px-4 text-base text-cream placeholder:text-cream-dim/50 focus:border-lime-500/50 focus:outline-none focus:ring-2 focus:ring-lime-500/40"
+                />
+              </label>
 
-            {error && <p className="mt-3 text-sm font-medium text-red-400">{error}</p>}
+              {error && <p className="mt-3 text-sm font-medium text-red-400">{error}</p>}
 
-            <Button fullWidth size="lg" className="mt-5" onClick={handleAdd} disabled={submitting}>
-              {submitting ? 'Adding…' : 'Add Player'}
-            </Button>
+              <Button type="submit" fullWidth size="lg" className="mt-5" disabled={submitting}>
+                {submitting ? 'Adding…' : 'Add Player'}
+              </Button>
+            </form>
           </>
         )}
       </div>
