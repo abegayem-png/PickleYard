@@ -638,6 +638,24 @@ export const supabaseStore: DataStore = {
     if (error) throw error
   },
 
+  async addOpenPlayPlayer(sessionId, participantId, playerName) {
+    const { data, error } = await sb().rpc('add_open_play_player', {
+      p_session_id: sessionId,
+      p_participant_id: participantId,
+      p_new_player_name: playerName,
+    })
+    if (error) throw error
+    const row = Array.isArray(data) ? data[0] : data
+    return {
+      success: Boolean(row?.success),
+      reason: (row?.reason as string) ?? null,
+      registrationId: (row?.registration_id as string) ?? null,
+      status: (row?.status as OpenPlayRegistration['status']) ?? null,
+      registeredCount: Number(row?.registered_count ?? 0),
+      remainingSlots: Number(row?.remaining_slots ?? 0),
+    }
+  },
+
   async getOpenPlayPublicRoster(sessionId) {
     const { data, error } = await sb().rpc('get_open_play_public_roster', { p_session_id: sessionId })
     if (error) throw error

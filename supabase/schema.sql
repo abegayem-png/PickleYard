@@ -885,6 +885,98 @@ revoke all on function register_open_play(uuid, text, text, text) from public;
 grant execute on function register_open_play(uuid, text, text, text) to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
+-- add_open_play_player — lets an already-joined participant add another
+-- player (e.g. a friend) to the SAME session without that person filling
+-- out their own mobile number. No new table: this is still just a row in
+-- open_play_registrations, same as a normal join.
+--
+-- Security model matches chat: p_participant_id is the requester's own
+-- registration id (the same "bearer token" already returned at join time
+-- and used for chat access) — proven server-side to belong to a currently
+-- joined registration for this *exact* session before anything happens,
+-- so nobody can add players to a session they haven't joined, or to a
+-- session they don't belong to by passing an arbitrary session id.
+-- Capacity/waitlist logic is identical to register_open_play. The new
+-- row's mobile_number is the requester's own (never collected again, and
+-- never exposed to the browser) — added players don't get their own
+-- locally-saved registration id on the frontend, so the person adding
+-- them can't accidentally chat "as" that person.
+-- ---------------------------------------------------------------------------
+create or replace function add_open_play_player(
+  p_session_id uuid,
+  p_participant_id uuid,
+  p_new_player_name text
+)
+returns table (
+  success boolean,
+  reason text,
+  registration_id uuid,
+  status text,
+  registered_count integer,
+  remaining_slots integer
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  requester record;
+  sess record;
+  joined_count integer;
+  new_id uuid;
+  new_status text;
+  trimmed_name text;
+begin
+  select r.* into requester from open_play_registrations r
+    where r.id = p_participant_id and r.session_id = p_session_id and r.status = 'joined';
+
+  if not found then
+    return query select false, 'You must be registered for this session to add players.', null::uuid, null::text, 0, 0;
+    return;
+  end if;
+
+  select s.* into sess from open_play_sessions s where s.id = p_session_id for update;
+
+  if not found or sess.status <> 'scheduled' then
+    return query select false, 'This Open Play session is no longer open for registration.', null::uuid, null::text, 0, 0;
+    return;
+  end if;
+
+  trimmed_name := trim(coalesce(p_new_player_name, ''));
+  if length(trimmed_name) = 0 then
+    return query select false, 'Enter a player name.', null::uuid, null::text, 0, 0;
+    return;
+  end if;
+
+  if exists (
+    select 1 from open_play_registrations r2
+    where r2.session_id = p_session_id and lower(r2.player_name) = lower(trimmed_name)
+  ) then
+    return query select false, 'This player may already be registered.', null::uuid, null::text, 0, 0;
+    return;
+  end if;
+
+  select count(*) into joined_count from open_play_registrations r3
+    where r3.session_id = p_session_id and r3.status = 'joined';
+
+  new_status := case when joined_count >= sess.player_limit then 'waitlisted' else 'joined' end;
+
+  insert into open_play_registrations (session_id, player_name, mobile_number, facebook_name, status)
+  values (p_session_id, trimmed_name, requester.mobile_number, null, new_status)
+  returning open_play_registrations.id into new_id;
+
+  if new_status = 'joined' then
+    joined_count := joined_count + 1;
+  end if;
+
+  return query select true, null::text, new_id, new_status, joined_count, greatest(sess.player_limit - joined_count, 0);
+end;
+$$;
+
+revoke all on function add_open_play_player(uuid, uuid, text) from public;
+grant execute on function add_open_play_player(uuid, uuid, text) to anon, authenticated;
+
+-- ---------------------------------------------------------------------------
 -- open_play_messages — one simple chat thread per Open Play session.
 -- Access (both read and write) is gated entirely by a registration id — the
 -- same random uuid register_open_play() already hands back to the client

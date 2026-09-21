@@ -98,6 +98,10 @@ export interface DataStore {
    *  waitlisted server-side; never trusted from the client. */
   addOpenPlayRegistration(input: OpenPlayRegistrationInput): Promise<RegisterOpenPlayResult>
   removeOpenPlayRegistration(id: string): Promise<void>
+  /** Lets an already-joined participant (proven by owning participantId,
+   *  same token used for chat) add another player to the same session
+   *  without collecting a mobile number again — reuses the requester's own. */
+  addOpenPlayPlayer(sessionId: string, participantId: string, playerName: string): Promise<RegisterOpenPlayResult>
   /** Public: minimum-safe roster for "View Players" — display name + status
    *  only, and empty when the owner has the player list turned off. */
   getOpenPlayPublicRoster(sessionId: string): Promise<OpenPlayPublicRosterEntry[]>

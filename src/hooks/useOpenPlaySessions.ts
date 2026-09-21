@@ -77,6 +77,15 @@ export function useOpenPlaySessions() {
     [refresh],
   )
 
+  const addPlayer = useCallback(
+    async (sessionId: string, participantId: string, playerName: string) => {
+      const result = await store.addOpenPlayPlayer(sessionId, participantId, playerName)
+      if (result.success) await refresh()
+      return result
+    },
+    [refresh],
+  )
+
   const listMessages = useCallback((sessionId: string) => {
     return store.listOpenPlayMessagesAdmin(sessionId)
   }, [])
@@ -96,6 +105,7 @@ export function useOpenPlaySessions() {
     listRegistrations,
     addRegistration,
     removeRegistration,
+    addPlayer,
     listMessages,
     deleteMessage,
   }

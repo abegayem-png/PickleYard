@@ -38,7 +38,12 @@ export default function OpenPlaySection() {
               <p className="text-center text-xs font-bold uppercase tracking-widest text-cream-dim">Upcoming Open Play</p>
             )}
             {upcoming.map((session) => (
-              <OpenPlayCard key={session.id} session={session} addRegistration={openPlay.addRegistration} />
+              <OpenPlayCard
+                key={session.id}
+                session={session}
+                addRegistration={openPlay.addRegistration}
+                addPlayer={openPlay.addPlayer}
+              />
             ))}
           </div>
         )}
@@ -50,15 +55,18 @@ export default function OpenPlaySection() {
 function OpenPlayCard({
   session,
   addRegistration,
+  addPlayer,
 }: {
   session: OpenPlaySessionWithCount
   addRegistration: (sessionId: string, name: string, mobile: string, facebookName?: string) => Promise<RegisterOpenPlayResult>
+  addPlayer: (sessionId: string, participantId: string, playerName: string) => Promise<RegisterOpenPlayResult>
 }) {
   const { settings } = useSettings()
   const roster = useOpenPlayRoster(session.id)
   const [joining, setJoining] = useState(false)
   const [showPlayers, setShowPlayers] = useState(false)
   const [showChat, setShowChat] = useState(false)
+  const [addingPlayer, setAddingPlayer] = useState(false)
   const [name, setName] = useState('')
   const [mobile, setMobile] = useState('')
   const [facebookName, setFacebookName] = useState('')
@@ -93,6 +101,26 @@ function OpenPlayCard({
     } finally {
       setSubmitting(false)
     }
+  }
+
+  async function handleAddPlayer(playerName: string): Promise<RegisterOpenPlayResult> {
+    if (!myRegistrationId) {
+      return {
+        success: false,
+        reason: 'You must be registered for this session to add players.',
+        registrationId: null,
+        status: null,
+        registeredCount: 0,
+        remainingSlots: 0,
+      }
+    }
+    const result = await addPlayer(session.id, myRegistrationId, playerName)
+    // The added player's own roster entry needs its own refresh here — the
+    // card's `addPlayer` already refreshes session counts, but the roster
+    // (names) hook has its own state and, in demo mode with no Realtime,
+    // won't otherwise know a new row exists until this explicit refresh.
+    if (result.success) await roster.refresh()
+    return result
   }
 
   return (
@@ -145,11 +173,24 @@ function OpenPlayCard({
       </div>
 
       {alreadyJoined && !joining ? (
-        <p className="text-center text-sm font-semibold text-lime-500">
-          {myStatus === 'waitlisted'
-            ? "✓ You're on the waitlist! We'll notify you if a spot opens."
-            : "✓ You're registered for this session!"}
-        </p>
+        <div className="text-center">
+          <p className="text-sm font-semibold text-lime-500">
+            {myStatus === 'waitlisted'
+              ? "✓ You're on the waitlist! We'll notify you if a spot opens."
+              : "✓ You're registered for this session!"}
+          </p>
+          {myStatus === 'joined' && (
+            <>
+              {spotsLeft > 0 ? (
+                <Button size="md" variant="secondary" className="mt-3" onClick={() => setAddingPlayer(true)}>
+                  Add Player
+                </Button>
+              ) : (
+                <p className="mt-3 font-display text-xs font-extrabold uppercase tracking-wide text-red-300">Session Full</p>
+              )}
+            </>
+          )}
+        </div>
       ) : joining ? (
         <div className="space-y-2">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -222,6 +263,8 @@ function OpenPlayCard({
     )}
 
     {showChat && <OpenPlayChatModal session={session} chatAvailable={chatAvailable} onClose={() => setShowChat(false)} />}
+
+    {addingPlayer && <AddPlayerModal onAdd={handleAddPlayer} onClose={() => setAddingPlayer(false)} />}
     </>
   )
 }
@@ -238,6 +281,91 @@ function RosterPreview({ joined, onViewAll }: { joined: { displayName: string }[
       {shown.map((p) => p.displayName).join(', ')}
       {extra > 0 && ` +${extra} more`}
     </button>
+  )
+}
+
+function AddPlayerModal({
+  onAdd,
+  onClose,
+}: {
+  onAdd: (playerName: string) => Promise<RegisterOpenPlayResult>
+  onClose: () => void
+}) {
+  const [name, setName] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [added, setAdded] = useState<string | null>(null)
+
+  async function handleAdd() {
+    if (!name.trim()) {
+      setError('Enter a player name.')
+      return
+    }
+    setSubmitting(true)
+    setError(null)
+    try {
+      const result = await onAdd(name.trim())
+      if (!result.success) {
+        setError(result.reason || 'Could not add player. Please try again.')
+        return
+      }
+      setAdded(name.trim())
+      setName('')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/60 sm:items-center sm:p-4" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full rounded-t-3xl bg-court-900 p-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] sm:max-w-sm sm:rounded-3xl"
+      >
+        {added ? (
+          <div className="text-center">
+            <div className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-full bg-lime-500/15 text-3xl">✅</div>
+            <h2 className="font-display text-xl font-extrabold text-cream">Player Added!</h2>
+            <p className="mt-1 text-sm text-cream-dim">{added} has been added to this session.</p>
+            <div className="mt-5 flex gap-2">
+              <Button fullWidth onClick={() => setAdded(null)}>
+                Add Another
+              </Button>
+              <Button fullWidth variant="secondary" onClick={onClose}>
+                Done
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="font-display text-xl font-extrabold text-cream">Add Player</h2>
+              <button onClick={onClose} className="grid h-9 w-9 place-items-center rounded-full bg-white/5 text-cream hover:bg-white/10">
+                ✕
+              </button>
+            </div>
+
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-semibold text-cream-dim">Player Name</span>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Full Name"
+                autoFocus
+                className="h-12 w-full rounded-xl border border-white/10 bg-court-800 px-4 text-base text-cream placeholder:text-cream-dim/50 focus:border-lime-500/50 focus:outline-none focus:ring-2 focus:ring-lime-500/40"
+              />
+            </label>
+
+            {error && <p className="mt-3 text-sm font-medium text-red-400">{error}</p>}
+
+            <Button fullWidth size="lg" className="mt-5" onClick={handleAdd} disabled={submitting}>
+              {submitting ? 'Adding…' : 'Add Player'}
+            </Button>
+          </>
+        )}
+      </div>
+    </div>
   )
 }
 

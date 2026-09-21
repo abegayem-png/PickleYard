@@ -632,6 +632,57 @@ export const localStore: DataStore = {
     write(KEYS.openPlayRegistrations, remaining)
   },
 
+  async addOpenPlayPlayer(sessionId, participantId, playerName) {
+    const registrations = read<OpenPlayRegistration[]>(KEYS.openPlayRegistrations, [])
+    const requester = registrations.find((r) => r.id === participantId && r.sessionId === sessionId && r.status === 'joined')
+    if (!requester) {
+      return { success: false, reason: 'You must be registered for this session to add players.', registrationId: null, status: null, registeredCount: 0, remainingSlots: 0 }
+    }
+
+    const sessions = read<OpenPlaySession[]>(KEYS.openPlaySessions, [])
+    const session = sessions.find((s) => s.id === sessionId)
+    if (!session || session.status !== 'scheduled') {
+      return { success: false, reason: 'This Open Play session is no longer open for registration.', registrationId: null, status: null, registeredCount: 0, remainingSlots: 0 }
+    }
+
+    const trimmedName = playerName.trim()
+    if (!trimmedName) {
+      return { success: false, reason: 'Enter a player name.', registrationId: null, status: null, registeredCount: 0, remainingSlots: 0 }
+    }
+
+    const duplicate = registrations.some(
+      (r) => r.sessionId === sessionId && r.playerName.trim().toLowerCase() === trimmedName.toLowerCase(),
+    )
+    if (duplicate) {
+      return { success: false, reason: 'This player may already be registered.', registrationId: null, status: null, registeredCount: 0, remainingSlots: 0 }
+    }
+
+    let joinedCount = registrations.filter((r) => r.sessionId === sessionId && r.status === 'joined').length
+    const status: OpenPlayRegistration['status'] = joinedCount >= session.playerLimit ? 'waitlisted' : 'joined'
+
+    const registration: OpenPlayRegistration = {
+      id: newId(),
+      createdAt: new Date().toISOString(),
+      sessionId,
+      playerName: trimmedName,
+      mobileNumber: requester.mobileNumber,
+      facebookName: '',
+      status,
+    }
+    write(KEYS.openPlayRegistrations, [...registrations, registration])
+
+    if (status === 'joined') joinedCount += 1
+
+    return {
+      success: true,
+      reason: null,
+      registrationId: registration.id,
+      status,
+      registeredCount: joinedCount,
+      remainingSlots: Math.max(session.playerLimit - joinedCount, 0),
+    }
+  },
+
   async getOpenPlayPublicRoster(sessionId) {
     const settings = read<Settings>(KEYS.settings, DEFAULT_SETTINGS)
     if (!settings.openPlayShowPlayerList) return []
